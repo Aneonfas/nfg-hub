@@ -122,7 +122,7 @@ the new location. The legacy tree remains unchanged as a migration backup.
 ## Bundled catalog state
 
 The bundled Anvil Empires catalog contains the Russian localization v1.0.0 for
-Steam build `24378492` and Anvil Forge Helper v0.2.0 for Steam build `24619810`.
+Steam build `24378492` and Anvil Forge Helper v1.0.0 for Steam build `24619810`.
 Each `nfg-package/1` manifest declares one managed PAK under
 `Anvil/Content/Paks`. The Hub validates and installs those files directly; no
 EXE, MSI, PowerShell, or package-provided code is executed.

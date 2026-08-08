@@ -14,10 +14,10 @@
     ]
   },
   "release": {
-    "version": "0.2.0",
+    "version": "1.0.0",
     "channel": "stable",
     "gameVersion": "steam-build-24619810",
-    "publishedAt": "2026-08-08T18:54:07Z",
+    "publishedAt": "2026-08-08T19:28:05Z",
     "highlights": [
       "Размечены все 10 актуальных результатов ковки с качеством",
       "Метки расположены у левого края для точного совмещения с полосой охлаждения",
@@ -27,11 +27,11 @@
       "Несовместимо с другими модификациями, заменяющими те же иконки ковки",
       "После обновления Anvil Empires совместимость необходимо проверить заново"
     ],
-    "notesUrl": "https://github.com/nullith2/Anvil-forge-helper/releases/tag/v0.2.0",
+    "notesUrl": "https://github.com/nullith2/Anvil-forge-helper/releases/tag/v1.0.0",
     "payload": {
-      "url": "https://github.com/nullith2/Anvil-forge-helper/releases/download/v0.2.0/Anvil-Forge-Helper-0.2.0-nfg-build24619810.zip",
+      "url": "https://github.com/nullith2/Anvil-forge-helper/releases/download/v1.0.0/Anvil-Forge-Helper-1.0.0-nfg-build24619810.zip",
       "sizeBytes": 30633,
-      "sha256": "c19a9cb1388732143eaa7855c3b170e623ffab67e5fda471944a8a0d8d3796e6"
+      "sha256": "976e4529f97a40516740678b21bf36fcb25141c79981b4e4f95b123cc2791ab7"
     }
   },
   "compatibility": {

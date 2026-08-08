@@ -574,11 +574,18 @@ async Task CheckCatalogSourcesAsync()
         candidate.Id == "nfg.anvil-empires.forge-helper");
     Assert(forgeHelper.Type == "mod", "Forge Helper was not loaded as a modification.");
     Assert(
+        forgeHelper.Release.Version == "1.0.0",
+        "Forge Helper has an unexpected product version.");
+    Assert(
         forgeHelper.Release.GameVersion == "steam-build-24619810",
         "Forge Helper targets an unexpected game build.");
     Assert(
         forgeHelper.Release.Payload is { SizeBytes: 30633 },
         "Forge Helper payload metadata was not loaded.");
+    Assert(
+        forgeHelper.Release.Payload?.Sha256 ==
+        "976e4529f97a40516740678b21bf36fcb25141c79981b4e4f95b123cc2791ab7",
+        "Forge Helper payload digest was not loaded.");
     Assert(
         File.Exists(Path.Combine(
             cacheRoot,
