@@ -244,7 +244,7 @@
                                     BorderThickness="1"
                                     CornerRadius="10">
                                 <StackPanel>
-                                    <TextBlock Text="ПЕРЕВОД"
+                                    <TextBlock Text="СТАТУС"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource TextSecondaryBrush}" />

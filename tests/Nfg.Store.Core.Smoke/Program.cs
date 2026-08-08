@@ -555,7 +555,8 @@ async Task CheckCatalogSourcesAsync()
         bundledRoot);
 
     Assert(remoteResult.Source == CatalogSourceKind.Remote, "Expected remote catalog source.");
-    var product = remoteResult.Catalog.Products.Single();
+    var product = remoteResult.Catalog.Products.Single(candidate =>
+        candidate.Id == "nfg.anvil-empires.ru");
     Assert(product.Release.Version == "1.0.0", "Unexpected product version.");
     Assert(product.Display.Features.Count > 0, "Product features were not loaded.");
     Assert(product.Release.Highlights.Count > 0, "Release highlights were not loaded.");
@@ -568,6 +569,29 @@ async Task CheckCatalogSourcesAsync()
     Assert(
         File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.ru.json")),
         "Product manifest was not cached.");
+
+    var forgeHelper = remoteResult.Catalog.Products.Single(candidate =>
+        candidate.Id == "nfg.anvil-empires.forge-helper");
+    Assert(forgeHelper.Type == "mod", "Forge Helper was not loaded as a modification.");
+    Assert(
+        forgeHelper.Release.Version == "1.0.0",
+        "Forge Helper has an unexpected product version.");
+    Assert(
+        forgeHelper.Release.GameVersion == "steam-build-24619810",
+        "Forge Helper targets an unexpected game build.");
+    Assert(
+        forgeHelper.Release.Payload is { SizeBytes: 30633 },
+        "Forge Helper payload metadata was not loaded.");
+    Assert(
+        forgeHelper.Release.Payload?.Sha256 ==
+        "976e4529f97a40516740678b21bf36fcb25141c79981b4e4f95b123cc2791ab7",
+        "Forge Helper payload digest was not loaded.");
+    Assert(
+        File.Exists(Path.Combine(
+            cacheRoot,
+            "products",
+            "nfg.anvil-empires.forge-helper.json")),
+        "Forge Helper manifest was not cached.");
 
     using var offlineClient = new HttpClient(new OfflineHandler());
     var cacheResult = await new CatalogService(offlineClient).LoadRemoteFirstAsync(

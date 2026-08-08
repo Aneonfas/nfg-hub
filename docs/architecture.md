@@ -119,9 +119,10 @@ The cache lives under `%LOCALAPPDATA%\NFG\Hub\cache\catalog`. On the first Hub
 startup, an existing `%LOCALAPPDATA%\NFG\Store` tree is copied atomically into
 the new location. The legacy tree remains unchanged as a migration backup.
 
-## Prototype state
+## Bundled catalog state
 
-The Anvil Empires manifest points to the published v1.0.0 ZIP for Steam build
-`24378492`. Its `nfg-package/1` manifest declares one managed PAK under
-`Anvil/Content/Paks`. The Hub validates and installs that file directly; no
+The bundled Anvil Empires catalog contains the Russian localization v1.0.0 for
+Steam build `24378492` and Anvil Forge Helper v1.0.0 for Steam build `24619810`.
+Each `nfg-package/1` manifest declares one managed PAK under
+`Anvil/Content/Paks`. The Hub validates and installs those files directly; no
 EXE, MSI, PowerShell, or package-provided code is executed.
