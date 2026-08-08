@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Versioned JSON contracts for NFG Hub catalogs and products.</Description>
+  </PropertyGroup>
+</Project>

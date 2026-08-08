@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "nfg.official",
+  "displayName": "NFG Official",
+  "products": [
+    "products/nfg.anvil-empires.ru.json"
+  ]
+}

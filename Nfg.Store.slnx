@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Nfg.Store.App/Nfg.Store.App.csproj" />
+    <Project Path="src/Nfg.Store.Contracts/Nfg.Store.Contracts.csproj" />
+    <Project Path="src/Nfg.Store.Core/Nfg.Store.Core.csproj" />
+    <Project Path="src/Nfg.Store.Installation/Nfg.Store.Installation.csproj" />
+    <Project Path="src/Nfg.Store.Platform.Windows/Nfg.Store.Platform.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Nfg.Store.Core.Smoke/Nfg.Store.Core.Smoke.csproj" />
+  </Folder>
+</Solution>

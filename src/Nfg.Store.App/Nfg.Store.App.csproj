@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NFG.Hub</AssemblyName>
+    <RootNamespace>Nfg.Store.App</RootNamespace>
+    <AssemblyTitle>NFG Hub</AssemblyTitle>
+    <Product>NFG Hub</Product>
+    <Description>NFG Hub desktop application.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nfg.Store.Contracts\Nfg.Store.Contracts.csproj" />
+    <ProjectReference Include="..\Nfg.Store.Core\Nfg.Store.Core.csproj" />
+    <ProjectReference Include="..\Nfg.Store.Installation\Nfg.Store.Installation.csproj" />
+    <ProjectReference Include="..\Nfg.Store.Platform.Windows\Nfg.Store.Platform.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\catalog\**\*">
+      <Link>catalog\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

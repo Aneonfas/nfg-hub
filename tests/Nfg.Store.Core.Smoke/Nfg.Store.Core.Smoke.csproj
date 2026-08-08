@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nfg.Store.App\Nfg.Store.App.csproj" />
+    <ProjectReference Include="..\..\src\Nfg.Store.Core\Nfg.Store.Core.csproj" />
+    <ProjectReference Include="..\..\src\Nfg.Store.Installation\Nfg.Store.Installation.csproj" />
+    <ProjectReference Include="..\..\src\Nfg.Store.Platform.Windows\Nfg.Store.Platform.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\catalog\**\*">
+      <Link>catalog\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

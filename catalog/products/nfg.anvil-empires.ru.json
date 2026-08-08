@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "nfg.anvil-empires.ru",
+  "type": "localization",
+  "display": {
+    "title": "Anvil Empires",
+    "subtitle": "Русская локализация",
+    "summary": "Русский перевод интерфейса, предметов и игровых систем.",
+    "description": "Неофициальный русский перевод Anvil Empires Pre-Alpha для Windows и Steam. Локализация охватывает основные игровые тексты и адаптирует шрифт для корректного отображения кириллицы.",
+    "features": [
+      "2 926 записей локализации",
+      "Интерфейс, предметы, сооружения, производство, задания и системные сообщения",
+      "Кириллическая замена шрифта"
+    ]
+  },
+  "release": {
+    "version": "1.0.0",
+    "channel": "stable",
+    "gameVersion": "steam-build-24378492",
+    "publishedAt": "2026-08-01T23:38:41Z",
+    "highlights": [
+      "Добавлена поддержка версии игры 89454 (Steam build 24378492)",
+      "Переведены предупреждение об отсутствии городов, заголовок очереди на сервер и кнопка выхода из очереди",
+      "Переведены оба уведомления о времени до обрушения Подземья",
+      "Переведено расстояние до ближайшего города"
+    ],
+    "knownIssues": [
+      "Серверные сообщения могут оставаться на английском",
+      "Текст внутри изображений не переводится",
+      "Некоторые raw-строки голосового чата и редкие игровые ветви могут оставаться английскими"
+    ],
+    "notesUrl": "https://github.com/nullith2/anvil-empires-russian/releases/tag/v1.0.0",
+    "payload": {
+      "url": "https://github.com/nullith2/anvil-empires-russian/releases/download/v1.0.0/Anvil-Empires-Russian-v1.0.0-steam-build-24378492.zip",
+      "sizeBytes": 478013,
+      "sha256": "a316fbdc1520794940f8a0906bbd5c346098e014fcfca02544c49b84d03c2f73"
+    }
+  },
+  "releases": [],
+  "compatibility": {
+    "platforms": [
+      "windows-x64"
+    ],
+    "gameVersion": "steam-build-24378492",
+    "status": "compatible"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": null,
+    "label": "Стабильная"
+  }
+}

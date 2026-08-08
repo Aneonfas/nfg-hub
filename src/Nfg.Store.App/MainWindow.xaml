@@ -1,0 +1,153 @@
+<Window x:Class="Nfg.Store.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:vm="clr-namespace:Nfg.Store.App.ViewModels"
+        xmlns:views="clr-namespace:Nfg.Store.App.Views"
+        mc:Ignorable="d"
+        Title="NFG Hub"
+        Width="1440"
+        Height="900"
+        MinWidth="1080"
+        MinHeight="700"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="{StaticResource BackgroundBrush}">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="0"
+                            GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type vm:CatalogViewModel}">
+            <views:CatalogView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ProductStateViewModel}">
+            <views:ProductDetailsView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:LibraryViewModel}">
+            <views:LibraryView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+            <views:SettingsView />
+        </DataTemplate>
+    </Window.Resources>
+
+    <Border BorderBrush="#303640" BorderThickness="1">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="232" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.RowSpan="2"
+                    Grid.Column="0"
+                    Background="{StaticResource SidebarBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid Margin="18,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="100" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="NFG" FontSize="23" FontWeight="SemiBold" />
+                            <TextBlock Text=" / " FontSize="23" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Text="HUB" FontSize="23" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <TextBlock Margin="1,6,0,0"
+                                   Style="{StaticResource MutedTextStyle}"
+                                   Text="Кураторский каталог продуктов" />
+                    </StackPanel>
+
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding Navigation}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource NavButtonStyle}"
+                                        Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="30" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Glyph}"
+                                                   FontSize="20"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                   HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Label}"
+                                                   FontSize="14"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Border Grid.Row="2"
+                            Margin="0,0,0,18"
+                            Padding="12,10"
+                            Background="#111419"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="9">
+                        <StackPanel>
+                            <TextBlock Text="DEV PREVIEW"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Margin="0,4,0,0"
+                                       Text="{Binding CatalogName}"
+                                       Style="{StaticResource MutedTextStyle}" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="0"
+                  Grid.Column="1"
+                  Background="{StaticResource BackgroundBrush}"
+                  MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Margin="24,0,0,0"
+                           VerticalAlignment="Center"
+                           Text="{Binding CurrentPage.Title}"
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Style="{StaticResource WindowButtonStyle}"
+                            Content="—"
+                            Click="Minimize_OnClick" />
+                    <Button Style="{StaticResource WindowButtonStyle}"
+                            Content="□"
+                            Click="Maximize_OnClick" />
+                    <Button Style="{StaticResource CloseWindowButtonStyle}"
+                            Content="×"
+                            FontSize="18"
+                            Click="Close_OnClick" />
+                </StackPanel>
+            </Grid>
+
+            <ContentControl Grid.Row="1"
+                            Grid.Column="1"
+                            Content="{Binding CurrentPage}" />
+        </Grid>
+    </Border>
+</Window>

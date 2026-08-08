@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Windows and Steam discovery for NFG Hub.</Description>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Transactional managed-file installation for NFG Hub packages.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nfg.Store.Contracts\Nfg.Store.Contracts.csproj" />
+    <ProjectReference Include="..\Nfg.Store.Core\Nfg.Store.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Catalog loading and domain state for NFG Hub.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nfg.Store.Contracts\Nfg.Store.Contracts.csproj" />
+  </ItemGroup>
+</Project>

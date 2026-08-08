@@ -1,0 +1,479 @@
+<UserControl x:Class="Nfg.Store.App.Views.ProductDetailsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="820"
+             d:DesignWidth="1200">
+    <UserControl.Resources>
+        <DataTemplate x:Key="ProductBulletTemplate">
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Ellipse Width="5"
+                         Height="5"
+                         Margin="1,8,10,0"
+                         VerticalAlignment="Top"
+                         Fill="{StaticResource AccentBrush}" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding}"
+                           TextWrapping="Wrap"
+                           FontSize="13"
+                           LineHeight="20"
+                           Foreground="#C2C7CE" />
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="KnownIssueTemplate">
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="—"
+                           Margin="0,0,9,0"
+                           Foreground="{StaticResource AmberBrush}" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding}"
+                           TextWrapping="Wrap"
+                           FontSize="13"
+                           LineHeight="20"
+                           Foreground="#D7C5AE" />
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  Background="{StaticResource BackgroundBrush}">
+        <Grid Margin="32,20,32,40">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Button Grid.Row="0"
+                    HorizontalAlignment="Left"
+                    Padding="14,8"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Content="← Назад"
+                    Command="{Binding DataContext.BackFromProductCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+            <Border Grid.Row="1"
+                    Margin="0,14,0,0"
+                    Style="{StaticResource CardStyle}"
+                    CornerRadius="22"
+                    ClipToBounds="True">
+                <Grid MinHeight="500">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.18*" />
+                        <ColumnDefinition Width="0.82*" MinWidth="350" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" Margin="42,38,34,34">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel>
+                            <Border HorizontalAlignment="Left"
+                                    Padding="9,5"
+                                    Background="#252B20"
+                                    CornerRadius="5">
+                                <TextBlock Text="{Binding FeaturedProduct.TypeLabel}"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource AccentBrush}" />
+                            </Border>
+
+                            <TextBlock Margin="0,24,0,0"
+                                       Text="{Binding FeaturedProduct.Title}"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI"
+                                       FontSize="54"
+                                       FontWeight="SemiBold"
+                                       LineHeight="58" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Text="{Binding FeaturedProduct.Subtitle}"
+                                       FontSize="24"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Margin="0,22,0,0"
+                                       MaxWidth="600"
+                                       HorizontalAlignment="Left"
+                                       Text="{Binding FeaturedProduct.Summary}"
+                                       TextWrapping="Wrap"
+                                       FontSize="17"
+                                       LineHeight="27"
+                                       Foreground="#C1C6CE" />
+
+                            <StackPanel Margin="0,22,0,0"
+                                        MaxWidth="420"
+                                        HorizontalAlignment="Left"
+                                        Visibility="{Binding HasMultipleVersions, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Margin="1,0,0,7"
+                                           Text="ВЕРСИЯ ДЛЯ УСТАНОВКИ"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <ComboBox MinWidth="320"
+                                          ItemsSource="{Binding AvailableVersions}"
+                                          SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanSelectVersion}"
+                                          AutomationProperties.Name="Выбор версии продукта"
+                                          Style="{StaticResource VersionComboBoxStyle}" />
+                            </StackPanel>
+
+                            <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
+                                <Button MinWidth="185"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Command="{Binding InstallCommand}"
+                                        IsEnabled="{Binding CanInstall}"
+                                        Visibility="{Binding IsNotInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding PrimaryActionText}"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                                <Button MinWidth="185"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Command="{Binding UpdateCommand}"
+                                        IsEnabled="{Binding CanUpdate}"
+                                        Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding UpdateActionText}"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                            </StackPanel>
+
+                            <Grid Margin="0,18,0,0"
+                                  Visibility="{Binding IsProgressVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ProgressBar Height="5"
+                                             Minimum="0"
+                                             Maximum="100"
+                                             Value="{Binding OperationProgress, Mode=OneWay}" />
+                                <TextBlock Grid.Row="1"
+                                           Margin="0,8,0,0"
+                                           Text="{Binding OperationStatus}"
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                            </Grid>
+                        </StackPanel>
+
+                        <Grid Grid.Row="2" Margin="0,32,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0"
+                                    Margin="0,0,8,0"
+                                    Padding="15,13"
+                                    Background="#111419"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10">
+                                <StackPanel>
+                                    <TextBlock Text="ВЕРСИЯ В КАТАЛОГЕ"
+                                               FontSize="10"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                    <TextBlock Margin="0,5,0,0"
+                                               Text="{Binding SelectedVersionLabel}"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="15"
+                                               Foreground="{StaticResource AccentBrush}" />
+                                    <StackPanel Margin="0,9,0,0"
+                                                Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <TextBlock Text="УСТАНОВЛЕНА"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                                        <TextBlock Margin="0,3,0,0"
+                                                   Text="{Binding InstalledVersionLabel}"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   FontSize="13"
+                                                   Foreground="#D7DCE2" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="1"
+                                    Margin="4,0"
+                                    Padding="15,13"
+                                    Background="#111419"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10">
+                                <StackPanel>
+                                    <TextBlock Text="СОВМЕСТИМОСТЬ"
+                                               FontSize="10"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                    <TextBlock Margin="0,5,0,0"
+                                               Text="{Binding LocalCompatibilityLabel}"
+                                               TextWrapping="Wrap"
+                                               FontSize="13">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelectedVersionUnverified}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource AmberBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="2"
+                                    Margin="8,0,0,0"
+                                    Padding="15,13"
+                                    Background="#111419"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10">
+                                <StackPanel>
+                                    <TextBlock Text="ПЕРЕВОД"
+                                               FontSize="10"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                    <TextBlock Margin="0,5,0,0"
+                                               Text="{Binding FeaturedProduct.ProgressLabel}"
+                                               FontSize="14"
+                                               Foreground="{StaticResource AccentBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+
+                    <Border Grid.Column="1" Margin="0" CornerRadius="0,21,21,0">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#16191B" Offset="0" />
+                                <GradientStop Color="#2C2118" Offset="0.48" />
+                                <GradientStop Color="#8B4A19" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid ClipToBounds="True">
+                            <Ellipse Width="520"
+                                     Height="520"
+                                     HorizontalAlignment="Right"
+                                     VerticalAlignment="Bottom"
+                                     Margin="0,0,-230,-240">
+                                <Ellipse.Fill>
+                                    <RadialGradientBrush>
+                                        <GradientStop Color="#E5A247" Offset="0" />
+                                        <GradientStop Color="#00E5A247" Offset="1" />
+                                    </RadialGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+
+                            <Border Width="176"
+                                    Height="176"
+                                    Margin="0,-70,0,0"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Background="#24FFFFFF"
+                                    BorderBrush="#55FFFFFF"
+                                    BorderThickness="1"
+                                    CornerRadius="88">
+                                <TextBlock Text="{Binding FeaturedProduct.Monogram}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI"
+                                           FontSize="58"
+                                           FontWeight="SemiBold"
+                                           Foreground="#E6ECF2" />
+                            </Border>
+
+                            <StackPanel HorizontalAlignment="Center"
+                                        VerticalAlignment="Bottom"
+                                        Margin="36,0,36,42">
+                                <TextBlock Text="{Binding FeaturedProduct.TypeLabel}"
+                                           HorizontalAlignment="Center"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="13"
+                                           FontWeight="Bold"
+                                           Foreground="#F0C18B" />
+                                <TextBlock Margin="0,9,0,0"
+                                           Text="{Binding FeaturedProduct.Summary}"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center"
+                                           FontSize="14"
+                                           Foreground="#E2D7CB" />
+                            </StackPanel>
+
+                            <Border HorizontalAlignment="Right"
+                                    VerticalAlignment="Top"
+                                    Margin="0,24,24,0"
+                                    Padding="9,5"
+                                    Background="#66000000"
+                                    BorderBrush="#44FFFFFF"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <TextBlock Text="{Binding SelectedChannelLabel}"
+                                           FontFamily="Cascadia Mono, Consolas"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="#F1C58F" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="2"
+                  Margin="0,18,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.35*" />
+                    <ColumnDefinition Width="0.65*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Margin="0,0,9,0"
+                        Padding="26,23"
+                        Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="3"
+                                    Height="25"
+                                    Margin="0,0,12,0"
+                                    Background="{StaticResource AccentBrush}"
+                                    CornerRadius="2" />
+                            <TextBlock Text="О продукте"
+                                       Style="{StaticResource SectionTitleStyle}" />
+                        </StackPanel>
+                        <TextBlock Margin="15,14,0,0"
+                                   Text="{Binding FeaturedProduct.Description}"
+                                   TextWrapping="Wrap"
+                                   FontSize="14"
+                                   LineHeight="23"
+                                   Foreground="#C2C7CE" />
+
+                        <Grid Margin="15,22,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="18" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0"
+                                    Padding="17,15,17,7"
+                                    Background="#111419"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Visibility="{Binding FeaturedProduct.HasFeatures, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock Text="Возможности"
+                                               Margin="0,0,0,13"
+                                               FontSize="15"
+                                               FontWeight="SemiBold" />
+                                    <ItemsControl ItemsSource="{Binding FeaturedProduct.Features}"
+                                                  ItemTemplate="{StaticResource ProductBulletTemplate}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="2"
+                                    Padding="17,15,17,7"
+                                    Background="#111419"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Visibility="{Binding HasSelectedReleaseHighlights, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding SelectedReleaseChangesTitle}"
+                                               Margin="0,0,0,13"
+                                               FontSize="15"
+                                               FontWeight="SemiBold" />
+                                    <ItemsControl ItemsSource="{Binding SelectedReleaseHighlights}"
+                                                  ItemTemplate="{StaticResource ProductBulletTemplate}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Border Margin="15,16,0,0"
+                                Padding="17,14,17,6"
+                                Background="#1C1814"
+                                BorderBrush="#59442E"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Visibility="{Binding HasSelectedKnownIssues, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="Известные ограничения"
+                                           Margin="0,0,0,11"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#E3C49B" />
+                                <ItemsControl ItemsSource="{Binding SelectedKnownIssues}"
+                                              ItemTemplate="{StaticResource KnownIssueTemplate}" />
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Margin="15,16,0,0"
+                                    Visibility="{Binding HasSelectedNotesUrl, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="Полное описание выпуска"
+                                       Margin="0,0,0,5"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBlock FontSize="12"
+                                       TextWrapping="Wrap">
+                                <Hyperlink NavigateUri="{Binding SelectedNotesUrl}"
+                                           RequestNavigate="ReleaseNotesLink_OnRequestNavigate"
+                                           Style="{StaticResource AccentHyperlinkStyle}">
+                                    Открыть страницу релиза ↗
+                                </Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1"
+                        Margin="9,0,0,0"
+                        Padding="24,22"
+                        Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="Состояние продукта"
+                                   Style="{StaticResource SectionTitleStyle}" />
+                        <Border Margin="0,18,0,0"
+                                Padding="12,10"
+                                Background="#2B2418"
+                                BorderBrush="#6E512B"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Visibility="{Binding HasAvailabilityMessage, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="{Binding AvailabilityMessage}"
+                                       TextWrapping="Wrap"
+                                       FontSize="13"
+                                       LineHeight="20"
+                                       Foreground="#EAC99E" />
+                        </Border>
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="↶" FontSize="20" Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Grid.Column="1"
+                                       Margin="10,2,0,0"
+                                       Text="{Binding FeaturedProduct.RollbackLabel}"
+                                       Foreground="#C6CBD2" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
