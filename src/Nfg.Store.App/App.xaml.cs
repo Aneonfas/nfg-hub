@@ -20,7 +20,7 @@ public partial class App : Application
 
     public App()
     {
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("NFG-Hub/0.1");
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("NFG-Hub/0.1.0");
     }
 
     protected override async void OnStartup(StartupEventArgs e)
