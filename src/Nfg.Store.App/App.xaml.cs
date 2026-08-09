@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
 using System.Windows;
 using Nfg.Store.App.Services;
 using Nfg.Store.App.ViewModels;
@@ -17,20 +18,31 @@ public partial class App : Application
     {
         Timeout = TimeSpan.FromMinutes(2)
     };
+    private string? _startupSmokeRoot;
 
     public App()
     {
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("NFG-Hub/0.1.0");
+        var informationalVersion = typeof(App).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        var productVersion = informationalVersion?.Split('+', 2)[0] ?? "0.0.0";
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"NFG-Hub/{productVersion}");
     }
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var isStartupSmoke = e.Args.Contains("--startup-smoke", StringComparer.Ordinal);
 
         try
         {
+            var localApplicationDataRoot = isStartupSmoke
+                ? _startupSmokeRoot = Path.Combine(
+                    Path.GetTempPath(),
+                    $"NFG-Hub-startup-smoke-{Environment.ProcessId}")
+                : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var dataResolution = AppDataMigration.Resolve(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+                localApplicationDataRoot);
             var dataRoot = dataResolution.DataRoot;
             var cacheRoot = Path.Combine(dataRoot, "cache", "catalog");
             var bundledCatalogRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
@@ -64,7 +76,7 @@ public partial class App : Application
                 await libraryStore.LoadAsync(),
                 StringComparer.Ordinal);
             var catalogService = new CatalogService(_httpClient);
-            var catalogResult = settings.CheckUpdatesAutomatically
+            var catalogResult = settings.CheckUpdatesAutomatically && !isStartupSmoke
                 ? await catalogService.LoadRemoteFirstAsync(
                     CatalogUri,
                     cacheRoot,
@@ -103,6 +115,11 @@ public partial class App : Application
 
             MainWindow = window;
             window.Show();
+            if (isStartupSmoke)
+            {
+                await Dispatcher.InvokeAsync(() => Shutdown(0));
+                return;
+            }
             if (startupWarning is not null)
             {
                 MessageBox.Show(
@@ -119,6 +136,12 @@ public partial class App : Application
             var details = ReferenceEquals(rootCause, exception)
                 ? exception.Message
                 : $"{exception.Message}\n\n{rootCause.Message}";
+            if (isStartupSmoke)
+            {
+                Console.Error.WriteLine(details);
+                Shutdown(1);
+                return;
+            }
             MessageBox.Show(
                 $"NFG Hub не смог запуститься.\n\n{details}",
                 "Ошибка запуска",
@@ -131,6 +154,10 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _httpClient.Dispose();
+        if (_startupSmokeRoot is not null && Directory.Exists(_startupSmokeRoot))
+        {
+            Directory.Delete(_startupSmokeRoot, recursive: true);
+        }
         base.OnExit(e);
     }
 }

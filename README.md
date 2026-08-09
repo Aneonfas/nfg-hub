@@ -16,8 +16,18 @@ dotnet run --project .\src\Nfg.Store.App\Nfg.Store.App.csproj
 ## Verify
 
 ```powershell
-dotnet build .\Nfg.Store.slnx
+.\scripts\verify.ps1 -Configuration Release
 ```
+
+## Releases
+
+Official release packages are built from annotated version tags by GitHub
+Actions. The workflow runs the same verification script, creates the portable
+self-contained Windows x64 ZIP and SHA-256 file, records build provenance, and
+prepares a draft GitHub Release for approval. Local packages are QA artifacts,
+not an alternative public distribution.
+
+See [docs/releasing.md](docs/releasing.md) for the release policy and commands.
 
 ## Structure
 

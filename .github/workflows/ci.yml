@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify Windows build
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build and run smoke checks
+        shell: pwsh
+        run: ./scripts/verify.ps1 -Configuration Release
+
+      - name: Build release package as a dry run
+        shell: pwsh
+        env:
+          RELEASE_OUTPUT: ${{ runner.temp }}\nfg-hub-ci-package
+        run: |
+          [xml]$project = Get-Content -LiteralPath './src/Nfg.Store.App/Nfg.Store.App.csproj' -Raw
+          $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+          ./scripts/build-release.ps1 `
+              -Version $version `
+              -RuntimeIdentifier win-x64 `
+              -OutputRoot $env:RELEASE_OUTPUT `
+              -SkipVerification `
+              -TestStartup `
+              -RemovePublishDirectory

@@ -8,6 +8,7 @@
         xmlns:views="clr-namespace:Nfg.Store.App.Views"
         mc:Ignorable="d"
         Title="NFG Hub"
+        Icon="Assets/NfgHub.ico"
         Width="1440"
         Height="900"
         MinWidth="1080"
