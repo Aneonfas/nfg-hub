@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/Aneonfas/nfg-hub-catalog",
+    "commit": "84d0fecf440abb4377bbd7dfc8ca98465082ff7c"
+  },
+  "files": [
+    {
+      "path": "catalog.json",
+      "sha256": "408105acdb285179fbbcd50bfa0cb8f3fa997ef58ea7d2fe3be54acd6a814497"
+    },
+    {
+      "path": "products/nfg.anvil-empires.forge-helper.json",
+      "sha256": "2e721158192c4dd39d329631a81baa564499ae584e9476b4f4c633d3fbebcb1a"
+    },
+    {
+      "path": "products/nfg.anvil-empires.ru.json",
+      "sha256": "01fed49c8ed100eeb4e31e5005b9bfcd7d8f2cf7d6a6c96135b8a76663b01201"
+    }
+  ]
+}

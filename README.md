@@ -36,7 +36,8 @@ See [docs/releasing.md](docs/releasing.md) for the release policy and commands.
 - `src/Nfg.Store.Contracts` — product and catalog manifest contracts.
 - `src/Nfg.Store.Installation` — hash-guarded managed-file installation, activation state, and removal.
 - `src/Nfg.Store.Platform.Windows` — Windows registry, Steam library, and app-manifest discovery.
-- `catalog` — bundled fallback catalog copied into the application output.
+- `catalog` — pinned bundled fallback snapshot copied into the application output.
+- `catalog.snapshot.json` — authoritative catalog commit and SHA-256 lock for that snapshot.
 - `docs/architecture.md` — current boundaries and installation lifecycle.
 
 ## Current installation scope
@@ -46,3 +47,12 @@ The Hub supports first installation, idempotent reinstall, adoption of an alread
 For the detected game build, the Hub recommends the newest exact match. If no release was verified against that build, it recommends the newest published release with a warning and still lets the user install it. The user can also choose any published version manually. Upgrades and downgrades use the same staged, hash-checked transaction, preserve the enabled state, and use a persisted journal to roll back an uncommitted change or finish cleanup after a committed change. Installation state records the Steam BuildID detected when the version was applied. Disabling preserves the verified file under a non-loadable `.nfg-disabled` name. Unknown files are never overwritten.
 
 All product mutations use a per-product cross-process lock, so two Hub windows cannot modify the same installation concurrently.
+
+The public catalog is authored in
+[`Aneonfas/nfg-hub-catalog`](https://github.com/Aneonfas/nfg-hub-catalog).
+Bundled files are synchronized from a committed state of that repository with
+`scripts/catalog-snapshot.ps1`; `scripts/verify.ps1` rejects manual drift from
+the pinned commit and hashes. The public root catalog remains the Product
+Manifest schema-v1 feed for Hub 0.1.1. Product Manifest v2 will use a separate
+`/v2/catalog.json` and `/v2/products/` tree only after the installation-slot
+implementation is ready.

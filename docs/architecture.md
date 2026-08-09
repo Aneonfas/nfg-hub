@@ -16,7 +16,33 @@ Package interpretation stays in Core, file mutation stays in Installation, and S
 
 ## Manifest rules
 
-Every product has a stable reverse-DNS identifier. The catalog points to product manifest paths relative to the catalog root. The required `release` field is the current/default release and keeps schema-v1 catalogs and older clients working. The optional `releases` array contains additional historical releases. Version strings are unique across both fields and use strict Semantic Versioning 2.0.0.
+The catalog points to product manifest paths relative to the catalog root.
+Product manifest schema v1 remains fully compatible with the identifier rules
+accepted by NFG Hub 0.1.1. Schema v2 uses strict safe ASCII reverse-DNS product
+and dependency identifiers and adds three optional variant fields, all of which
+are required for a `localization` product:
+
+- `familyId` is the stable product family used for future UI grouping.
+- `locale` is the variant's structurally valid BCP-47 language tag.
+- `exclusiveGroup` is the stable id of a shared installation slot.
+
+Locales are unique without regard to case inside a `familyId`, independently of
+the installation slot. Every language variant in one family must declare the
+same `exclusiveGroup`. Products sharing an `exclusiveGroup` must also target the
+same Steam AppID and use the same installation strategy. This cross-validation
+is performed only after the complete catalog has loaded and before a remote
+copy can replace the cache.
+
+The future installation-slot stage will derive
+`installationKey = exclusiveGroup ?? productId`. That key will identify shared
+installation state and locks so language variants in one group can be switched
+mutually exclusively. This stage only reserves and validates the metadata: the
+current installer, state files, locks, migration, and UI still use `productId`.
+
+The required `release` field is the current/default release and keeps schema-v1
+catalogs and older clients working. The optional `releases` array contains
+additional historical releases. Version strings are unique across both fields
+and use strict Semantic Versioning 2.0.0.
 
 A release becomes installable only when all of the following are present:
 
@@ -27,7 +53,7 @@ A release becomes installable only when all of the following are present:
 
 Each release can declare its own `gameVersion` in `steam-build-<BuildID>` form. When it is omitted, the Hub uses the legacy product-level `compatibility.gameVersion`. Missing or mismatched game compatibility does not disable installation: it marks the release as unverified for the detected game build and requires an explicit user confirmation. Missing payload information still keeps the install action disabled.
 
-Product-facing information is delivered by the catalog rather than inferred from the ZIP or scraped from a hosting page. `display.features` describes durable capabilities; each release's `highlights`, `knownIssues`, and `notesUrl` describe that specific published version. These fields are optional for backward compatibility, but list entries must be meaningful non-empty text and external links must use HTTPS. The `nfg-package.json` manifest remains a machine-only installation contract.
+Product-facing information is delivered by the catalog rather than inferred from the ZIP or scraped from a hosting page. `display.features` describes durable capabilities; each release's `highlights`, `knownIssues`, and `notesUrl` describe that specific published version. These fields are optional for backward compatibility, but list entries must be meaningful non-empty text and external links must use HTTPS. The `nfg-package.json` manifest remains the unchanged `nfg-package/1` machine-only installation contract; family, locale, and installation-slot metadata belong to the product catalog, not the package ZIP.
 
 ## Installation lifecycle
 
@@ -104,6 +130,14 @@ transaction rules as the recommended action.
 
 The primary index is published at
 `https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/catalog.json`.
+This root endpoint is the Product Manifest schema-v1 feed: every product
+manifest it references remains schema v1 so the released Hub 0.1.1 continues
+receiving current product releases. Product Manifest v2 is exercised by
+synthetic contract tests only in this stage. A future `/v2/catalog.json`
+endpoint will reference a separate `/v2/products/` tree and will be selected by
+a newer Hub only together with installation-slot state, migration, switching,
+and UI. Root-referenced product files must never be repurposed as v2 manifests.
+
 At startup the app downloads the index and every referenced product manifest,
 validates the complete set, and only then replaces cached files. The catalog
 load order is remote, last validated cache, then the catalog bundled with the
@@ -121,8 +155,21 @@ the new location. The legacy tree remains unchanged as a migration backup.
 
 ## Bundled catalog state
 
-The bundled Anvil Empires catalog contains the Russian localization v1.0.0 for
-Steam build `24378492` and Anvil Forge Helper v1.0.0 for Steam build `24619810`.
-Each `nfg-package/1` manifest declares one managed PAK under
+[`Aneonfas/nfg-hub-catalog`](https://github.com/Aneonfas/nfg-hub-catalog) is
+the authoritative catalog. The Hub repository's `catalog/` directory is a
+bundled fallback snapshot of exactly the index and product manifests referenced
+by the legacy root endpoint. `catalog.snapshot.json` pins the authoritative
+commit and the SHA-256 of every bundled runtime file.
+
+`scripts/catalog-snapshot.ps1 -Sync` reads committed Git blobs from the local
+authoritative checkout, validates the complete staged catalog through
+`CatalogService`, and promotes only those runtime files and their lock with
+rollback on failure. `-Check` is offline and verifies the exact file set and
+hashes; it runs at the start of `scripts/verify.ps1`, so CI and release builds
+reject uncontrolled drift. A later authoritative `main` update does not
+invalidate an older Hub tag because each Hub commit remains pinned to its exact
+source commit.
+
+Each current `nfg-package/1` manifest declares one managed PAK under
 `Anvil/Content/Paks`. The Hub validates and installs those files directly; no
 EXE, MSI, PowerShell, or package-provided code is executed.

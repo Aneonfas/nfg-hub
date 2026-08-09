@@ -22,6 +22,9 @@ if ($actualSdkVersion -cne $expectedSdkVersion) {
 
 Push-Location $repositoryRoot
 try {
+    & (Join-Path $PSScriptRoot 'catalog-snapshot.ps1') -Check
+    if ($LASTEXITCODE -ne 0) { throw 'Bundled catalog snapshot verification failed.' }
+
     dotnet restore $solutionPath
     if ($LASTEXITCODE -ne 0) { throw 'dotnet restore failed.' }
 

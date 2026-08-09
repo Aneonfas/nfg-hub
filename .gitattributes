@@ -1,0 +1,3 @@
+catalog/*.json text eol=lf
+catalog/**/*.json text eol=lf
+catalog.snapshot.json text eol=lf

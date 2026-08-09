@@ -48,6 +48,45 @@ does not apply the new immutability policy retroactively, so that release is
 kept as a legacy build. All subsequent official binaries must be produced by
 the release workflow; the next one should become the current **Latest** release.
 
+## Updating the bundled catalog snapshot
+
+Product metadata is authored in the sibling `nfg-hub-catalog` repository. Its
+root `catalog.json` is the legacy Product Manifest schema-v1 feed consumed by
+Hub 0.1.1; referenced root products must remain readable by that release and
+continue receiving product updates. A separate `/v2/catalog.json`, referencing
+a separate `/v2/products/` tree, is reserved for the future installation-slot
+rollout and does not exist yet. Root-referenced product files must never be
+converted to v2. The bundled `catalog/` in this repository is only an offline
+snapshot of the root endpoint.
+
+Commit and validate the authoritative change first. Then, from the NFG Hub
+checkout, synchronize the exact committed blobs:
+
+```powershell
+dotnet restore .\Nfg.Store.slnx
+
+.\scripts\catalog-snapshot.ps1 `
+    -Sync `
+    -AuthoritativeRoot ..\nfg-hub-catalog
+
+.\scripts\catalog-snapshot.ps1 `
+    -Check `
+    -AuthoritativeRoot ..\nfg-hub-catalog
+
+.\scripts\verify.ps1 -Configuration Release
+```
+
+`-Sync` does not fetch, checkout, commit, push, tag, or publish. It refuses
+uncommitted authoritative runtime files and existing uncommitted snapshot
+changes, exports the source repository's exact `HEAD` blobs, validates them with
+the Hub contract, and writes `catalog.snapshot.json` with the source commit and
+file hashes. Review and commit the Hub snapshot separately. Never edit bundled
+product manifests as a second authoritative copy.
+
+CI uses `-Check` without a sibling checkout or network access. This verifies the
+pinned snapshot rather than moving `main`, so an older Hub commit remains
+reproducible after the public catalog advances.
+
 ## Local verification
 
 Run the same verification used by CI:
