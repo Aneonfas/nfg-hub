@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using Nfg.Store.Contracts;
 
@@ -45,7 +44,6 @@ public sealed class PackageDownloader(HttpClient httpClient)
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, payload.Url);
-            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("NFG-Hub", "0.1.0"));
 
             using var response = await httpClient.SendAsync(
                 request,

@@ -7,7 +7,8 @@
     <AssemblyTitle>NFG Hub</AssemblyTitle>
     <Product>NFG Hub</Product>
     <Description>NFG Hub desktop application.</Description>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
+    <ApplicationIcon>Assets\NfgHub.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +16,10 @@
     <ProjectReference Include="..\Nfg.Store.Core\Nfg.Store.Core.csproj" />
     <ProjectReference Include="..\Nfg.Store.Installation\Nfg.Store.Installation.csproj" />
     <ProjectReference Include="..\Nfg.Store.Platform.Windows\Nfg.Store.Platform.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\NfgHub.ico" />
   </ItemGroup>
 
   <ItemGroup>
