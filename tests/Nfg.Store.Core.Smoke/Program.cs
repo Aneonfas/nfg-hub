@@ -11,6 +11,19 @@ using Nfg.Store.Core;
 using Nfg.Store.Installation;
 using Nfg.Store.Platform.Windows;
 
+if (args.Length > 0)
+{
+    if (args is ["--validate-catalog", var catalogRoot])
+    {
+        await new CatalogService().LoadAsync(catalogRoot);
+        Console.WriteLine($"Catalog '{Path.GetFullPath(catalogRoot)}' is valid.");
+        return;
+    }
+
+    throw new ArgumentException(
+        "Usage: Nfg.Store.Core.Smoke [--validate-catalog <catalog-root>]");
+}
+
 var catalogUri = new Uri("https://catalog.test/catalog.json");
 var bundledRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
 var testRoot = Path.Combine(
@@ -34,6 +47,7 @@ try
     CheckAppDataMigration();
     await CheckCatalogSourcesAsync();
     await CheckRichCatalogValidationAsync();
+    await CheckProductSchemaV2ValidationAsync();
     await CheckProductLibraryStoreAsync();
     await CheckPackageDownloadAndValidationAsync();
     await CheckManagedUpdateAsync();
@@ -557,7 +571,16 @@ async Task CheckCatalogSourcesAsync()
     Assert(remoteResult.Source == CatalogSourceKind.Remote, "Expected remote catalog source.");
     var product = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.ru");
-    Assert(product.Release.Version == "1.0.0", "Unexpected product version.");
+    Assert(product.SchemaVersion == 1, "Russian localization should remain compatible with schema v1.");
+    Assert(product.FamilyId is null, "Schema-v1 Russian localization must not declare familyId.");
+    Assert(product.Locale is null, "Schema-v1 Russian localization must not declare locale.");
+    Assert(product.ExclusiveGroup is null,
+        "Schema-v1 Russian localization must not declare exclusiveGroup.");
+    Assert(product.Release.Version == "1.0.1", "Unexpected current localization version.");
+    Assert(product.Release.GameVersion == "steam-build-24619810",
+        "Current localization targets an unexpected game build.");
+    Assert(product.Releases.Count == 1 && product.Releases[0].Version == "1.0.0",
+        "Historical localization v1.0.0 was not loaded.");
     Assert(product.Display.Features.Count > 0, "Product features were not loaded.");
     Assert(product.Release.Highlights.Count > 0, "Release highlights were not loaded.");
     Assert(product.Release.KnownIssues.Count > 0, "Known issues were not loaded.");
@@ -572,6 +595,7 @@ async Task CheckCatalogSourcesAsync()
 
     var forgeHelper = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.forge-helper");
+    Assert(forgeHelper.SchemaVersion == 1, "Forge Helper should remain on product schema v1.");
     Assert(forgeHelper.Type == "mod", "Forge Helper was not loaded as a modification.");
     Assert(
         forgeHelper.Release.Version == "1.0.0",
@@ -706,6 +730,269 @@ async Task CheckRichCatalogValidationAsync()
         "A structurally null required product object should be rejected as catalog validation.");
 }
 
+async Task CheckProductSchemaV2ValidationAsync()
+{
+    var legacyProduct = CreateProduct(1, new string('a', 64));
+    var serializedLegacyProduct = JsonNode.Parse(SerializeProduct(legacyProduct))?.AsObject()
+        ?? throw new InvalidOperationException("Could not construct schema-v1 product JSON.");
+    Assert(!serializedLegacyProduct.ContainsKey("familyId"),
+        "Schema-v1 serialization should omit familyId.");
+    Assert(!serializedLegacyProduct.ContainsKey("locale"),
+        "Schema-v1 serialization should omit locale.");
+    Assert(!serializedLegacyProduct.ContainsKey("exclusiveGroup"),
+        "Schema-v1 serialization should omit exclusiveGroup.");
+
+    var legacyCatalog = await LoadCatalogProductsCaseAsync("schema-v1-compatible", legacyProduct);
+    var loadedLegacyProduct = legacyCatalog.Products.Single();
+    Assert(loadedLegacyProduct.FamilyId is null, "Schema-v1 familyId should default to null.");
+    Assert(loadedLegacyProduct.Locale is null, "Schema-v1 locale should default to null.");
+    Assert(loadedLegacyProduct.ExclusiveGroup is null,
+        "Schema-v1 exclusiveGroup should default to null.");
+    await LoadCatalogProductsCaseAsync(
+        "schema-v1-uppercase-id-compatible",
+        legacyProduct with { Id = "Nfg.Test.Localization" });
+    var legacyLooseIdentifiers = legacyProduct with
+    {
+        Id = "nfg.test_legacy.localization",
+        Dependencies =
+        [
+            new ProductDependency
+            {
+                ProductId = "Legacy_Dependency",
+                VersionRange = "*"
+            }
+        ]
+    };
+    var legacyLooseCatalog = await LoadCatalogJsonCaseAsync(
+        "schema-v1-legacy-identifiers-compatible",
+        [SerializeProduct(legacyLooseIdentifiers)],
+        catalogId: "Legacy_Catalog");
+    var loadedLegacyLooseProduct = legacyLooseCatalog.Products.Single();
+    Assert(loadedLegacyLooseProduct.Id == legacyLooseIdentifiers.Id,
+        "Schema-v1 product ids accepted by the legacy contract must remain valid.");
+    Assert(loadedLegacyLooseProduct.Dependencies.Single().ProductId == "Legacy_Dependency",
+        "Schema-v1 dependency ids accepted by the legacy contract must remain valid.");
+
+    var russian = CreateVariantProduct("nfg.test.localization.ru", "ru");
+    var legacyModification = legacyProduct with
+    {
+        Id = "nfg.test.mod",
+        Type = "mod"
+    };
+    var mixedCatalog = await LoadCatalogProductsCaseAsync(
+        "schema-v2-mixed-with-v1",
+        russian,
+        legacyModification);
+    var loadedRussian = mixedCatalog.Products.Single(product => product.Id == russian.Id);
+    Assert(loadedRussian.SchemaVersion == 2, "Schema-v2 product version was not retained.");
+    Assert(loadedRussian.FamilyId == "nfg.test.localization", "Schema-v2 familyId was not loaded.");
+    Assert(loadedRussian.Locale == "ru", "Schema-v2 locale was not loaded.");
+    Assert(loadedRussian.ExclusiveGroup == "nfg.test.game-language",
+        "Schema-v2 exclusiveGroup was not loaded.");
+
+    var schemaV2Modification = legacyModification with { SchemaVersion = 2 };
+    await LoadCatalogProductsCaseAsync("schema-v2-non-localization-without-variant", schemaV2Modification);
+
+    string[] validLocales =
+    [
+        "pt-BR",
+        "zh-Hant-TW",
+        "sl-rozaj-biske-1994",
+        "de-DE-u-co-phonebk",
+        "x-private",
+        "i-klingon"
+    ];
+    await LoadCatalogProductsCaseAsync(
+        "valid-bcp47-locales",
+        validLocales
+            .Select((locale, index) => CreateVariantProduct(
+                $"nfg.test.localization.locale-{index}",
+                locale))
+            .ToArray());
+
+    await AssertCatalogRejectedAsync(
+        "unsupported-product-schema-v3",
+        legacyProduct with { SchemaVersion = 3 },
+        "An unsupported product schema should be rejected.");
+    await AssertCatalogRejectedAsync(
+        "schema-v1-with-variant-metadata",
+        legacyProduct with
+        {
+            FamilyId = russian.FamilyId,
+            Locale = russian.Locale,
+            ExclusiveGroup = russian.ExclusiveGroup
+        },
+        "Schema-v1 products must not declare schema-v2 variant metadata.");
+    await AssertCatalogRejectedAsync(
+        "schema-v2-localization-without-variant-metadata",
+        legacyProduct with { SchemaVersion = 2 },
+        "Schema-v2 localization products must declare variant metadata.");
+
+    foreach (var (caseName, incompleteProduct) in new[]
+             {
+                 (
+                     "schema-v2-missing-family",
+                     russian with { FamilyId = null }),
+                 (
+                     "schema-v2-missing-locale",
+                     russian with { Locale = null }),
+                 (
+                     "schema-v2-missing-exclusive-group",
+                     russian with { ExclusiveGroup = null }),
+                 (
+                     "schema-v2-non-localization-partial-variant",
+                     schemaV2Modification with { FamilyId = "nfg.test.localization" })
+             })
+    {
+        await AssertCatalogRejectedAsync(
+            caseName,
+            incompleteProduct,
+            $"Incomplete schema-v2 variant metadata case '{caseName}' should be rejected.");
+    }
+
+    foreach (var (caseName, invalidProduct) in new[]
+             {
+                 (
+                     "unsafe-product-id",
+                     russian with { Id = "nfg.test/unsafe" }),
+                 (
+                     "empty-product-id",
+                     russian with { Id = "" }),
+                 (
+                     "empty-family-id",
+                     russian with { FamilyId = "" }),
+                 (
+                     "unsafe-family-id",
+                     russian with { FamilyId = "../nfg.test.localization" }),
+                 (
+                     "unsafe-exclusive-group",
+                     russian with { ExclusiveGroup = "nfg.test.game_language" }),
+                 (
+                     "empty-exclusive-group",
+                     russian with { ExclusiveGroup = "" }),
+                 (
+                     "unsafe-dependency-id",
+                     russian with
+                     {
+                         Dependencies =
+                         [
+                             new ProductDependency
+                             {
+                                 ProductId = "legacy_dependency",
+                                 VersionRange = "*"
+                             }
+                         ]
+                     })
+             })
+    {
+        await AssertCatalogRejectedAsync(
+            caseName,
+            invalidProduct,
+            $"Unsafe stable id case '{caseName}' should be rejected.");
+    }
+
+    foreach (var invalidLocale in new[] { "ru_RU", "ru--RU", "r", "en-u", "en-variant-variant" })
+    {
+        await AssertCatalogRejectedAsync(
+            $"invalid-locale-{invalidLocale.Replace('_', '-').Replace("--", "-")}",
+            russian with { Locale = invalidLocale },
+            $"Invalid BCP-47 locale '{invalidLocale}' should be rejected.");
+    }
+
+    await AssertCatalogSetRejectedAsync(
+        "duplicate-locale-case-insensitive",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.ru-alternate",
+                "RU",
+                familyId: "NFG.TEST.LOCALIZATION",
+                exclusiveGroup: "NFG.TEST.GAME-LANGUAGE")
+        ],
+        "Locales must be unique case-insensitively within one family.");
+
+    await LoadCatalogProductsCaseAsync(
+        "same-locale-in-different-families",
+        russian,
+        CreateVariantProduct(
+            "nfg.test.other-family.ru",
+            "RU",
+            familyId: "nfg.test.other-localization"));
+
+    await AssertCatalogSetRejectedAsync(
+        "duplicate-locale-same-family-different-group",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.ru-other-slot",
+                "RU",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "A locale must remain unique within its family even when exclusive groups differ.");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-groups-different-locales",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.en-other-slot",
+                "en",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "All variants in one family must share one exclusive group.");
+
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-different-steam-app",
+        [
+            russian,
+            CreateVariantProduct("nfg.test.localization.en", "en", steamAppId: "999999")
+        ],
+        "Products in one exclusive group must share one Steam app id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-different-strategy",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.en",
+                "en",
+                installationStrategy: "other-managed-files")
+        ],
+        "Products in one exclusive group must use compatible installation strategies.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-without-steam-app",
+        russian with
+        {
+            Installation = russian.Installation with { Detection = [] }
+        },
+        "A variant in an exclusive group must declare one Steam app id.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-with-nonnumeric-steam-app",
+        russian with
+        {
+            Installation = russian.Installation with
+            {
+                Detection =
+                [
+                    new ProductDetectionRule { Provider = "steam", ProductId = "not-numeric" }
+                ]
+            }
+        },
+        "A variant Steam app id must be numeric.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-with-multiple-steam-apps",
+        russian with
+        {
+            Installation = russian.Installation with
+            {
+                Detection =
+                [
+                    new ProductDetectionRule { Provider = "steam", ProductId = "2383950" },
+                    new ProductDetectionRule { Provider = "steam", ProductId = "999999" }
+                ]
+            }
+        },
+        "A variant in an exclusive group must not declare multiple Steam app ids.");
+}
+
 async Task AssertCatalogRejectedAsync(
     string caseName,
     ProductManifest product,
@@ -714,23 +1001,51 @@ async Task AssertCatalogRejectedAsync(
         () => LoadCatalogCaseAsync(caseName, SerializeProduct(product)),
         message);
 
+async Task AssertCatalogSetRejectedAsync(
+    string caseName,
+    IReadOnlyList<ProductManifest> products,
+    string message) =>
+    await AssertThrowsAsync<CatalogValidationException>(
+        () => LoadCatalogProductsCaseAsync(caseName, products.ToArray()),
+        message);
+
 async Task<StoreCatalog> LoadCatalogCaseAsync(string caseName, string productJson)
+    => await LoadCatalogJsonCaseAsync(caseName, [productJson]);
+
+async Task<StoreCatalog> LoadCatalogProductsCaseAsync(
+    string caseName,
+    params ProductManifest[] products) =>
+    await LoadCatalogJsonCaseAsync(caseName, products.Select(SerializeProduct).ToArray());
+
+async Task<StoreCatalog> LoadCatalogJsonCaseAsync(
+    string caseName,
+    IReadOnlyList<string> productJsons,
+    string catalogId = "nfg.test")
 {
     var root = Path.Combine(testRoot, "catalog-validation", caseName);
     var productsRoot = Path.Combine(root, "products");
     Directory.CreateDirectory(productsRoot);
 
+    var productPaths = productJsons
+        .Select((_, index) => $"products/test-{index}.json")
+        .ToArray();
+
     await File.WriteAllTextAsync(
         Path.Combine(root, "catalog.json"),
-        """
-        {
-          "schemaVersion": 1,
-          "catalogId": "nfg.test",
-          "displayName": "Test catalog",
-          "products": ["products/test.json"]
-        }
-        """);
-    await File.WriteAllTextAsync(Path.Combine(productsRoot, "test.json"), productJson);
+        JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = 1,
+                catalogId,
+                displayName = "Test catalog",
+                products = productPaths
+            }));
+    for (var index = 0; index < productJsons.Count; index++)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(productsRoot, $"test-{index}.json"),
+            productJsons[index]);
+    }
 
     return await new CatalogService().LoadAsync(root);
 }
@@ -1507,6 +1822,33 @@ static ProductManifest CreateProduct(
         Dependencies = [],
         Progress = new ProductProgress { Label = "Test" }
     };
+
+static ProductManifest CreateVariantProduct(
+    string id,
+    string locale,
+    string familyId = "nfg.test.localization",
+    string exclusiveGroup = "nfg.test.game-language",
+    string steamAppId = "2383950",
+    string installationStrategy = "managed-files")
+{
+    var product = CreateProduct(1, new string('a', 64));
+    return product with
+    {
+        SchemaVersion = 2,
+        Id = id,
+        FamilyId = familyId,
+        Locale = locale,
+        ExclusiveGroup = exclusiveGroup,
+        Installation = product.Installation with
+        {
+            Strategy = installationStrategy,
+            Detection =
+            [
+                new ProductDetectionRule { Provider = "steam", ProductId = steamAppId }
+            ]
+        }
+    };
+}
 
 static void WriteEntry(ZipArchive archive, string path, byte[] contents)
 {

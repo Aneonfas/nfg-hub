@@ -7,6 +7,38 @@ namespace Nfg.Store.Core;
 public sealed class CatalogService
 {
     private const int MaximumInformationItemCount = 100;
+    private const int MaximumStableIdLength = 253;
+
+    private static readonly IReadOnlySet<string> GrandfatheredLanguageTags =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "art-lojban",
+            "cel-gaulish",
+            "en-GB-oed",
+            "i-ami",
+            "i-bnn",
+            "i-default",
+            "i-enochian",
+            "i-hak",
+            "i-klingon",
+            "i-lux",
+            "i-mingo",
+            "i-navajo",
+            "i-pwn",
+            "i-tao",
+            "i-tay",
+            "i-tsu",
+            "no-bok",
+            "no-nyn",
+            "sgn-BE-FR",
+            "sgn-BE-NL",
+            "sgn-CH-DE",
+            "zh-guoyu",
+            "zh-hakka",
+            "zh-min",
+            "zh-min-nan",
+            "zh-xiang"
+        };
 
     private readonly HttpClient _httpClient;
 
@@ -159,6 +191,8 @@ public sealed class CatalogService
             products.Add(product);
         }
 
+        ValidateProductSet(products);
+
         return new StoreCatalog(catalog.CatalogId, catalog.DisplayName, products);
     }
 
@@ -195,6 +229,8 @@ public sealed class CatalogService
             products.Add(product);
             files[normalizedPath] = productBytes;
         }
+
+        ValidateProductSet(products);
 
         return new RemoteCatalog(
             new StoreCatalog(catalog.CatalogId, catalog.DisplayName, products),
@@ -352,15 +388,21 @@ public sealed class CatalogService
 
     private static void ValidateProduct(ProductManifest product)
     {
-        if (product.SchemaVersion != 1)
+        if (product.SchemaVersion is not (1 or 2))
         {
             throw new CatalogValidationException(
                 $"Product '{product.Id}' has unsupported schema version {product.SchemaVersion}.");
         }
 
-        if (string.IsNullOrWhiteSpace(product.Id) || !product.Id.Contains('.', StringComparison.Ordinal))
+        if (product.SchemaVersion == 1
+                ? string.IsNullOrWhiteSpace(product.Id) ||
+                  !product.Id.Contains('.', StringComparison.Ordinal)
+                : !IsStableId(product.Id))
         {
-            throw new CatalogValidationException("Product ids must be stable reverse-DNS identifiers.");
+            throw new CatalogValidationException(
+                product.SchemaVersion == 1
+                    ? "Schema-v1 product ids must be nonblank and contain a dot."
+                    : "Schema-v2 product ids must be safe reverse-DNS identifiers.");
         }
 
         if (product.Display is null ||
@@ -390,13 +432,17 @@ public sealed class CatalogService
                 rule is null || string.IsNullOrWhiteSpace(rule.Provider)) ||
             product.Dependencies.Any(dependency =>
                 dependency is null ||
-                string.IsNullOrWhiteSpace(dependency.ProductId) ||
+                (product.SchemaVersion == 1
+                    ? string.IsNullOrWhiteSpace(dependency.ProductId)
+                    : !IsStableId(dependency.ProductId)) ||
                 string.IsNullOrWhiteSpace(dependency.VersionRange)) ||
             string.IsNullOrWhiteSpace(product.Progress.Label))
         {
             throw new CatalogValidationException(
                 $"Product '{product.Id}' has incomplete required metadata.");
         }
+
+        ValidateVariantMetadata(product);
 
         if (product.Progress.TranslationPercent is < 0 or > 100)
         {
@@ -433,6 +479,313 @@ public sealed class CatalogService
             }
         }
     }
+
+    private static void ValidateVariantMetadata(ProductManifest product)
+    {
+        var hasFamilyId = product.FamilyId is not null;
+        var hasLocale = product.Locale is not null;
+        var hasExclusiveGroup = product.ExclusiveGroup is not null;
+        var hasAnyVariantMetadata = hasFamilyId || hasLocale || hasExclusiveGroup;
+        var hasCompleteVariantMetadata = hasFamilyId && hasLocale && hasExclusiveGroup;
+
+        if (product.SchemaVersion == 1)
+        {
+            if (hasAnyVariantMetadata)
+            {
+                throw new CatalogValidationException(
+                    $"Schema-v1 product '{product.Id}' cannot declare schema-v2 variant metadata.");
+            }
+
+            return;
+        }
+
+        if (hasAnyVariantMetadata && !hasCompleteVariantMetadata)
+        {
+            throw new CatalogValidationException(
+                $"Schema-v2 product '{product.Id}' must declare familyId, locale, and " +
+                "exclusiveGroup together.");
+        }
+
+        if (product.Type.Equals("localization", StringComparison.OrdinalIgnoreCase) &&
+            !hasCompleteVariantMetadata)
+        {
+            throw new CatalogValidationException(
+                $"Schema-v2 localization product '{product.Id}' must declare familyId, locale, " +
+                "and exclusiveGroup.");
+        }
+
+        if (!hasCompleteVariantMetadata)
+        {
+            return;
+        }
+
+        if (!IsStableId(product.FamilyId))
+        {
+            throw new CatalogValidationException(
+                $"Product '{product.Id}' familyId must be a safe reverse-DNS identifier.");
+        }
+
+        if (!IsStableId(product.ExclusiveGroup))
+        {
+            throw new CatalogValidationException(
+                $"Product '{product.Id}' exclusiveGroup must be a safe reverse-DNS identifier.");
+        }
+
+        if (!IsStructurallyValidLanguageTag(product.Locale))
+        {
+            throw new CatalogValidationException(
+                $"Product '{product.Id}' locale must be a structurally valid BCP-47 language tag.");
+        }
+    }
+
+    private static void ValidateProductSet(IReadOnlyList<ProductManifest> products)
+    {
+        var variants = products
+            .Where(product =>
+                product.SchemaVersion == 2 &&
+                product.FamilyId is not null &&
+                product.Locale is not null &&
+                product.ExclusiveGroup is not null)
+            .ToArray();
+
+        foreach (var family in variants.GroupBy(
+                     product => product.FamilyId!,
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            var locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var product in family)
+            {
+                if (!locales.Add(product.Locale!))
+                {
+                    throw new CatalogValidationException(
+                        $"Product family '{family.Key}' declares locale '{product.Locale}' more than once.");
+                }
+            }
+
+            var exclusiveGroups = family
+                .Select(product => product.ExclusiveGroup!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (exclusiveGroups.Length != 1)
+            {
+                throw new CatalogValidationException(
+                    $"Products in familyId '{family.Key}' must declare the same exclusiveGroup.");
+            }
+        }
+
+        foreach (var installationSlot in variants.GroupBy(
+                     product => product.ExclusiveGroup!,
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            string? expectedSteamAppId = null;
+            string? expectedStrategy = null;
+
+            foreach (var product in installationSlot)
+            {
+                var steamAppId = GetSingleSteamAppId(product);
+                expectedSteamAppId ??= steamAppId;
+                expectedStrategy ??= product.Installation.Strategy;
+
+                if (!steamAppId.Equals(expectedSteamAppId, StringComparison.Ordinal))
+                {
+                    throw new CatalogValidationException(
+                        $"Products in exclusiveGroup '{installationSlot.Key}' must declare the same Steam app id.");
+                }
+
+                if (!product.Installation.Strategy.Equals(expectedStrategy, StringComparison.Ordinal))
+                {
+                    throw new CatalogValidationException(
+                        $"Products in exclusiveGroup '{installationSlot.Key}' have incompatible " +
+                        "installation strategies.");
+                }
+            }
+        }
+    }
+
+    private static string GetSingleSteamAppId(ProductManifest product)
+    {
+        var steamRules = product.Installation.Detection
+            .Where(rule => rule.Provider.Equals("steam", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (steamRules.Length == 0 ||
+            steamRules.Any(rule => !IsAsciiDigits(rule.ProductId)))
+        {
+            throw new CatalogValidationException(
+                $"Product '{product.Id}' in exclusiveGroup '{product.ExclusiveGroup}' must declare " +
+                "exactly one numeric Steam app id.");
+        }
+
+        var appIds = steamRules
+            .Select(rule => rule.ProductId!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (appIds.Length != 1)
+        {
+            throw new CatalogValidationException(
+                $"Product '{product.Id}' in exclusiveGroup '{product.ExclusiveGroup}' must declare " +
+                "exactly one numeric Steam app id.");
+        }
+
+        return appIds[0];
+    }
+
+    private static bool IsStableId(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > MaximumStableIdLength)
+        {
+            return false;
+        }
+
+        var segments = value.Split('.', StringSplitOptions.None);
+        return segments.Length >= 2 && segments.All(segment =>
+            segment.Length is >= 1 and <= 63 &&
+            IsAsciiLetterOrDigit(segment[0]) &&
+            IsAsciiLetterOrDigit(segment[^1]) &&
+            segment.All(character => IsAsciiLetterOrDigit(character) || character == '-'));
+    }
+
+    private static bool IsStructurallyValidLanguageTag(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.Length > 255 ||
+            value.Contains('_', StringComparison.Ordinal) ||
+            value.Any(character => !IsAsciiLetterOrDigit(character) && character != '-'))
+        {
+            return false;
+        }
+
+        if (GrandfatheredLanguageTags.Contains(value))
+        {
+            return true;
+        }
+
+        var subtags = value.Split('-', StringSplitOptions.None);
+        if (subtags.Any(subtag => subtag.Length is < 1 or > 8))
+        {
+            return false;
+        }
+
+        if (subtags[0].Equals("x", StringComparison.OrdinalIgnoreCase))
+        {
+            return subtags.Length > 1 && subtags.Skip(1).All(IsAsciiAlphaNumeric);
+        }
+
+        var index = 0;
+        var languageLength = subtags[index].Length;
+        if (languageLength is >= 2 and <= 3 && IsAsciiLetters(subtags[index]))
+        {
+            index++;
+            var extlangCount = 0;
+            while (index < subtags.Length &&
+                   extlangCount < 3 &&
+                   subtags[index].Length == 3 &&
+                   IsAsciiLetters(subtags[index]))
+            {
+                index++;
+                extlangCount++;
+            }
+        }
+        else if (languageLength is >= 4 and <= 8 && IsAsciiLetters(subtags[index]))
+        {
+            index++;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (index < subtags.Length &&
+            subtags[index].Length == 4 &&
+            IsAsciiLetters(subtags[index]))
+        {
+            index++;
+        }
+
+        if (index < subtags.Length &&
+            (subtags[index].Length == 2 && IsAsciiLetters(subtags[index]) ||
+             subtags[index].Length == 3 && subtags[index].All(IsAsciiDigit)))
+        {
+            index++;
+        }
+
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (index < subtags.Length && IsVariantSubtag(subtags[index]))
+        {
+            if (!variants.Add(subtags[index]))
+            {
+                return false;
+            }
+
+            index++;
+        }
+
+        var extensionSingletons = new HashSet<char>();
+        while (index < subtags.Length && IsExtensionSingleton(subtags[index]))
+        {
+            var singleton = char.ToLowerInvariant(subtags[index][0]);
+            if (!extensionSingletons.Add(singleton))
+            {
+                return false;
+            }
+
+            index++;
+            var extensionSubtagCount = 0;
+            while (index < subtags.Length &&
+                   subtags[index].Length is >= 2 and <= 8 &&
+                   IsAsciiAlphaNumeric(subtags[index]))
+            {
+                index++;
+                extensionSubtagCount++;
+            }
+
+            if (extensionSubtagCount == 0)
+            {
+                return false;
+            }
+        }
+
+        if (index < subtags.Length && subtags[index].Equals("x", StringComparison.OrdinalIgnoreCase))
+        {
+            index++;
+            var privateUseSubtagCount = 0;
+            while (index < subtags.Length && IsAsciiAlphaNumeric(subtags[index]))
+            {
+                index++;
+                privateUseSubtagCount++;
+            }
+
+            if (privateUseSubtagCount == 0)
+            {
+                return false;
+            }
+        }
+
+        return index == subtags.Length;
+    }
+
+    private static bool IsVariantSubtag(string value) =>
+        value.Length is >= 5 and <= 8 && IsAsciiAlphaNumeric(value) ||
+        value.Length == 4 && IsAsciiDigit(value[0]) && value.All(IsAsciiLetterOrDigit);
+
+    private static bool IsExtensionSingleton(string value) =>
+        value.Length == 1 &&
+        IsAsciiLetterOrDigit(value[0]) &&
+        !value.Equals("x", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAsciiAlphaNumeric(string value) =>
+        value.All(IsAsciiLetterOrDigit);
+
+    private static bool IsAsciiLetters(string value) =>
+        value.All(character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
+
+    private static bool IsAsciiLetterOrDigit(char character) =>
+        character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9';
+
+    private static bool IsAsciiDigit(char character) =>
+        character is >= '0' and <= '9';
+
+    private static bool IsAsciiDigits(string? value) =>
+        !string.IsNullOrEmpty(value) && value.All(IsAsciiDigit);
 
     private static void ValidateRelease(
         string productId,
