@@ -540,6 +540,9 @@ public sealed class CatalogService
 
     private static void ValidateProductSet(IReadOnlyList<ProductManifest> products)
     {
+        var productsById = products.ToDictionary(
+            product => product.Id,
+            StringComparer.OrdinalIgnoreCase);
         var variants = products
             .Where(product =>
                 product.SchemaVersion == 2 &&
@@ -592,6 +595,17 @@ public sealed class CatalogService
                      product => product.ExclusiveGroup!,
                      StringComparer.OrdinalIgnoreCase))
         {
+            if (productsById.TryGetValue(installationSlot.Key, out var idOwner) &&
+                !string.Equals(
+                    idOwner.ExclusiveGroup,
+                    installationSlot.Key,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new CatalogValidationException(
+                    $"exclusiveGroup '{installationSlot.Key}' conflicts with product id " +
+                    $"'{idOwner.Id}' outside that installation slot.");
+            }
+
             if (installationSlot
                     .Select(product => product.ExclusiveGroup!)
                     .Distinct(StringComparer.Ordinal)

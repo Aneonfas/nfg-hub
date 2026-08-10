@@ -26,6 +26,14 @@ internal sealed record ManagedUpdateJournal
 
     public IReadOnlyList<string> PreservedDestinations { get; init; } = [];
 
+    public bool CleanupPrepared { get; init; }
+
+    /// <summary>
+    /// Schema-v1 recovery has fully restored and verified the old installation. While this
+    /// flag is durable, recovery may only remove its own rollback markers and the journal.
+    /// </summary>
+    public bool RollbackComplete { get; init; }
+
     [JsonIgnore]
     public string EffectiveInstallationKey => SchemaVersion switch
     {
@@ -65,7 +73,10 @@ internal sealed class ManagedUpdateJournalStore
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(journal);
-        if (journal.SchemaVersion != CurrentSchemaVersion || journal.InstallationKey is null)
+        if (journal.SchemaVersion != CurrentSchemaVersion ||
+            journal.InstallationKey is null ||
+            journal.CleanupPrepared ||
+            journal.RollbackComplete)
         {
             throw new InstallationStateException(
                 "Only schema-v2 managed update journals can be committed.");
@@ -79,7 +90,8 @@ internal sealed class ManagedUpdateJournalStore
             InstallationKey = journal.InstallationKey,
             OldState = journal.OldState,
             NewState = journal.NewState,
-            PreservedDestinations = journal.PreservedDestinations
+            PreservedDestinations = journal.PreservedDestinations,
+            CleanupPrepared = journal.CleanupPrepared
         };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(document, SerializerOptions);
         var path = GetJournalPath(journal.InstallationKey);
@@ -98,6 +110,104 @@ internal sealed class ManagedUpdateJournalStore
                 $"A managed update journal for '{journal.InstallationKey}' already exists.",
                 exception);
         }
+    }
+
+    public async Task<ManagedUpdateJournal> MarkCleanupPreparedAsync(
+        ManagedUpdateJournal journal,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(journal);
+        if (journal.SchemaVersion != CurrentSchemaVersion ||
+            journal.CleanupPrepared ||
+            journal.OldState is null)
+        {
+            throw new InstallationStateException(
+                "Only an unprepared schema-v2 replacement journal can enter cleanup phase.");
+        }
+
+        var current = await LoadAsync(journal.EffectiveInstallationKey, cancellationToken)
+            ?? throw new InstallationStateException(
+                $"Managed update journal for '{journal.EffectiveInstallationKey}' disappeared.");
+        if (current.CleanupPrepared ||
+            current.OldState is null ||
+            !current.OperationId.Equals(journal.OperationId, StringComparison.Ordinal) ||
+            !InstallationStateMigrator.StatesEqual(current.OldState, journal.OldState) ||
+            !InstallationStateMigrator.StatesEqual(current.NewState, journal.NewState) ||
+            !current.PreservedDestinations.SequenceEqual(
+                journal.PreservedDestinations,
+                StringComparer.Ordinal))
+        {
+            throw new InstallationStateException(
+                $"Managed update journal for '{journal.EffectiveInstallationKey}' changed before cleanup.");
+        }
+
+        var prepared = journal with { CleanupPrepared = true };
+        ValidateCurrentJournal(prepared, prepared.EffectiveInstallationKey);
+        var document = new ManagedUpdateJournalV2
+        {
+            SchemaVersion = CurrentSchemaVersion,
+            OperationId = prepared.OperationId,
+            InstallationKey = prepared.InstallationKey!,
+            OldState = prepared.OldState,
+            NewState = prepared.NewState,
+            PreservedDestinations = prepared.PreservedDestinations,
+            CleanupPrepared = true
+        };
+        await InstallationStateStore.WriteBytesAtomicAsync(
+            GetJournalPath(prepared.EffectiveInstallationKey),
+            JsonSerializer.SerializeToUtf8Bytes(document, SerializerOptions),
+            overwrite: true,
+            cancellationToken);
+        return prepared;
+    }
+
+    public async Task<ManagedUpdateJournal> MarkRollbackCompleteAsync(
+        ManagedUpdateJournal journal,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(journal);
+        if (journal.SchemaVersion != LegacySchemaVersion ||
+            journal.RollbackComplete ||
+            journal.CleanupPrepared ||
+            journal.ProductId is null ||
+            journal.OldState is null)
+        {
+            throw new InstallationStateException(
+                "Only an incomplete schema-v1 journal can enter completed rollback cleanup.");
+        }
+
+        var current = await LoadAsync(journal.EffectiveInstallationKey, cancellationToken)
+            ?? throw new InstallationStateException(
+                $"Managed update journal for '{journal.EffectiveInstallationKey}' disappeared.");
+        if (current.SchemaVersion != LegacySchemaVersion ||
+            current.RollbackComplete ||
+            current.CleanupPrepared ||
+            !current.OperationId.Equals(journal.OperationId, StringComparison.Ordinal) ||
+            !string.Equals(current.ProductId, journal.ProductId, StringComparison.Ordinal) ||
+            !InstallationStateMigrator.StatesEqual(current.OldState!, journal.OldState) ||
+            !InstallationStateMigrator.StatesEqual(current.NewState, journal.NewState))
+        {
+            throw new InstallationStateException(
+                $"Managed update journal for '{journal.EffectiveInstallationKey}' changed before rollback cleanup.");
+        }
+
+        var completed = journal with { RollbackComplete = true };
+        ValidateLegacyJournal(completed, completed.EffectiveInstallationKey);
+        var document = new ManagedUpdateJournalV1
+        {
+            SchemaVersion = LegacySchemaVersion,
+            OperationId = completed.OperationId,
+            ProductId = completed.ProductId!,
+            OldState = completed.OldState,
+            NewState = completed.NewState,
+            RollbackComplete = true
+        };
+        await InstallationStateStore.WriteBytesAtomicAsync(
+            GetJournalPath(completed.EffectiveInstallationKey),
+            JsonSerializer.SerializeToUtf8Bytes(document, SerializerOptions),
+            overwrite: true,
+            cancellationToken);
+        return completed;
     }
 
     public async Task<IReadOnlyList<ManagedUpdateJournal>> LoadAllAsync(
@@ -214,7 +324,9 @@ internal sealed class ManagedUpdateJournalStore
             ProductId = document.ProductId,
             OldState = document.OldState,
             NewState = document.NewState,
-            PreservedDestinations = []
+            PreservedDestinations = [],
+            CleanupPrepared = false,
+            RollbackComplete = document.RollbackComplete
         };
     }
 
@@ -232,7 +344,9 @@ internal sealed class ManagedUpdateJournalStore
             InstallationKey = document.InstallationKey,
             OldState = document.OldState,
             NewState = document.NewState,
-            PreservedDestinations = document.PreservedDestinations
+            PreservedDestinations = document.PreservedDestinations,
+            CleanupPrepared = document.CleanupPrepared,
+            RollbackComplete = false
         };
     }
 
@@ -265,6 +379,7 @@ internal sealed class ManagedUpdateJournalStore
             journal.OldState is null ||
             journal.NewState is null ||
             journal.PreservedDestinations is not { Count: 0 } ||
+            journal.CleanupPrepared ||
             journal.OldState.SchemaVersion != LegacySchemaVersion ||
             journal.NewState.SchemaVersion != LegacySchemaVersion)
         {
@@ -299,7 +414,9 @@ internal sealed class ManagedUpdateJournalStore
                 journal.OldState.InstallationKey,
                 expectedInstallationKey,
                 StringComparison.Ordinal) ||
-            journal.PreservedDestinations is null)
+            journal.PreservedDestinations is null ||
+            journal.CleanupPrepared && journal.OldState is null ||
+            journal.RollbackComplete)
         {
             throw new InstallationStateException(
                 $"Managed update journal for '{expectedInstallationKey}' is invalid.");
@@ -348,15 +465,32 @@ internal sealed class ManagedUpdateJournalStore
         string expectedInstallationKey,
         bool requireSameProductVersionChange)
     {
+        if (!IsSteamAppId(journal.NewState.SteamAppId))
+        {
+            throw new InstallationStateException(
+                $"Managed update journal for '{expectedInstallationKey}' has an invalid Steam App ID.");
+        }
+
         if (journal.OldState is null)
         {
+            if (!journal.NewState.IsEnabled)
+            {
+                throw new InstallationStateException(
+                    $"Fresh installation journal for '{expectedInstallationKey}' is disabled.");
+            }
+
             return;
         }
 
-        if (!PathsEqual(journal.OldState.GameRoot, journal.NewState.GameRoot))
+        if (!IsSteamAppId(journal.OldState.SteamAppId) ||
+            !journal.OldState.SteamAppId.Equals(
+                journal.NewState.SteamAppId,
+                StringComparison.Ordinal) ||
+            journal.OldState.IsEnabled != journal.NewState.IsEnabled ||
+            !PathsEqual(journal.OldState.GameRoot, journal.NewState.GameRoot))
         {
             throw new InstallationStateException(
-                $"Managed update journal for '{expectedInstallationKey}' changes the game root.");
+                $"Managed update journal for '{expectedInstallationKey}' changes slot invariants.");
         }
 
         if (requireSameProductVersionChange &&
@@ -378,6 +512,9 @@ internal sealed class ManagedUpdateJournalStore
 
     private static bool IsOperationId(string? operationId) =>
         operationId is { Length: 32 } && operationId.All(Uri.IsHexDigit);
+
+    private static bool IsSteamAppId(string? steamAppId) =>
+        !string.IsNullOrWhiteSpace(steamAppId) && steamAppId.All(char.IsAsciiDigit);
 
     private static bool PathsEqual(string left, string right)
     {
@@ -407,6 +544,9 @@ internal sealed class ManagedUpdateJournalStore
         public required InstalledProductState OldState { get; init; }
 
         public required InstalledProductState NewState { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool RollbackComplete { get; init; }
     }
 
     private sealed record ManagedUpdateJournalV2
@@ -422,5 +562,8 @@ internal sealed class ManagedUpdateJournalStore
         public required InstalledProductState NewState { get; init; }
 
         public required IReadOnlyList<string> PreservedDestinations { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool CleanupPrepared { get; init; }
     }
 }

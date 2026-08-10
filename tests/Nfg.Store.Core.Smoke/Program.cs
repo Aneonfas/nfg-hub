@@ -20,6 +20,46 @@ if (args.Length > 0)
         return;
     }
 
+    if (args is
+        [
+            "--hold-installation-lock",
+            var lockDataRoot,
+            var lockInstallationKey,
+            var lockReadyPath,
+            var lockReleasePath
+        ])
+    {
+        await ManagedStateMutationSmoke.HoldInstallationLockAsync(
+            lockDataRoot,
+            lockInstallationKey,
+            lockReadyPath,
+            lockReleasePath);
+        return;
+    }
+
+    if (args is ["--managed-state-mutation"])
+    {
+        var focusedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "nfg-store-mutation-smoke",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(focusedRoot);
+            await ManagedStateMutationSmoke.RunAsync(focusedRoot);
+            Console.WriteLine("NFG Hub managed-state mutation smoke checks passed.");
+        }
+        finally
+        {
+            if (Directory.Exists(focusedRoot))
+            {
+                Directory.Delete(focusedRoot, recursive: true);
+            }
+        }
+
+        return;
+    }
+
     if (args is ["--product-family-view-model"])
     {
         var focusedRoot = Path.Combine(
@@ -45,7 +85,8 @@ if (args.Length > 0)
 
     throw new ArgumentException(
         "Usage: Nfg.Store.Core.Smoke " +
-        "[--validate-catalog <catalog-root> | --product-family-view-model]");
+        "[--validate-catalog <catalog-root> | --product-family-view-model | " +
+        "--managed-state-mutation]");
 }
 
 var catalogUri = new Uri("https://catalog.test/catalog.json");
@@ -76,6 +117,7 @@ try
     await InstallationStateV2Smoke.RunAsync(testRoot);
     await ManagedUpdateJournalV2Smoke.RunAsync(testRoot);
     await ManagedVariantInstallerSmoke.RunAsync(testRoot);
+    await ManagedStateMutationSmoke.RunAsync(testRoot);
     CheckInstallationCatalogRequirementUnion();
     await CheckProductLibraryStoreAsync();
     await CheckPackageDownloadAndValidationAsync();
@@ -1021,6 +1063,61 @@ async Task CheckProductSchemaV2ValidationAsync()
                 exclusiveGroup: "NFG.TEST.GAME-LANGUAGE")
         ],
         "Installation slot ids must use stable, identical casing.");
+
+    var anchoredRussian = CreateVariantProduct(
+        "nfg.anvil-empires.ru",
+        "ru",
+        familyId: "nfg.anvil-empires.localization",
+        exclusiveGroup: "nfg.anvil-empires.ru");
+    var anchoredSpanish = CreateVariantProduct(
+        "nfg.anvil-empires.es",
+        "es",
+        familyId: "nfg.anvil-empires.localization",
+        exclusiveGroup: "nfg.anvil-empires.ru");
+    var anchoredCatalog = await LoadCatalogProductsCaseAsync(
+        "exclusive-group-product-id-self-anchor",
+        anchoredRussian,
+        anchoredSpanish);
+    Assert(anchoredCatalog.Products.Count == 2,
+        "An exclusiveGroup may equal the product id of a member in that same slot.");
+
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-standalone-product-id",
+        [
+            russian,
+            schemaV2Modification with { Id = "nfg.test.game-language" }
+        ],
+        "An exclusiveGroup must not collide with a standalone product id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-standalone-product-id-case-alias",
+        [
+            russian,
+            schemaV2Modification with { Id = "NFG.TEST.GAME-LANGUAGE" }
+        ],
+        "A case alias of an exclusiveGroup must not collide with a standalone product id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-other-slot-product-id",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.game-language",
+                "en",
+                familyId: "nfg.test.other-localization",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "An exclusiveGroup must not collide with a product id belonging to another slot.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-other-slot-product-id-case-alias",
+        [
+            russian,
+            CreateVariantProduct(
+                "NFG.TEST.GAME-LANGUAGE",
+                "en",
+                familyId: "nfg.test.other-localization",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "A case alias of an exclusiveGroup must not collide with another slot's product id.");
+
     await AssertCatalogSetRejectedAsync(
         "same-family-different-types",
         [

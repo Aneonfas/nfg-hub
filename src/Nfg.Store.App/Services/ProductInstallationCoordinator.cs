@@ -103,13 +103,20 @@ public sealed class ProductInstallationCoordinator(
                 progress?.Report(new ProductInstallProgress(
                     92,
                     "Безопасное применение выбранного варианта…"));
-                var result = await _installer.ApplyVariantAsync(
-                    package,
-                    product,
-                    installation.GameRoot,
-                    expectedProductId,
-                    installation.BuildId,
-                    cancellationToken);
+                var result = expectedProductId is null
+                    ? await _installer.InstallAsync(
+                        package,
+                        product,
+                        installation.GameRoot,
+                        installation.BuildId,
+                        cancellationToken)
+                    : await _installer.ApplyVariantAsync(
+                        package,
+                        product,
+                        installation.GameRoot,
+                        expectedProductId,
+                        installation.BuildId,
+                        cancellationToken);
 
                 progress?.Report(new ProductInstallProgress(
                     100,

@@ -13,6 +13,7 @@ public sealed class ManagedFilesInstaller
 
     private readonly IInstallationStateStore _stateStore;
     private readonly ManagedUpdateJournalStore _journalStore;
+    private readonly ManagedStateMutationJournalStore _mutationJournalStore;
     private readonly InstallationOperationLock _operationLock;
 
     public ManagedFilesInstaller(IInstallationStateStore stateStore)
@@ -20,6 +21,7 @@ public sealed class ManagedFilesInstaller
         ArgumentNullException.ThrowIfNull(stateStore);
         _stateStore = stateStore;
         _journalStore = new ManagedUpdateJournalStore(stateStore);
+        _mutationJournalStore = new ManagedStateMutationJournalStore(stateStore);
         _operationLock = new InstallationOperationLock(stateStore.DataRoot);
     }
 
@@ -187,9 +189,11 @@ public sealed class ManagedFilesInstaller
     public async Task RecoverPendingOperationsAsync(
         CancellationToken cancellationToken = default)
     {
-        var journals = await _journalStore.LoadAllAsync(cancellationToken);
-        foreach (var installationKey in journals
+        var updateJournals = await _journalStore.LoadAllAsync(cancellationToken);
+        var mutationJournals = await _mutationJournalStore.LoadAllAsync(cancellationToken);
+        foreach (var installationKey in updateJournals
                      .Select(journal => journal.EffectiveInstallationKey)
+                     .Concat(mutationJournals.Select(journal => journal.InstallationKey))
                      .Distinct(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -627,7 +631,7 @@ public sealed class ManagedFilesInstaller
         var state = await _stateStore.LoadAsync(installationKey, cancellationToken)
             ?? throw new ManagedFilesInstallException(
                 $"Installation slot '{installationKey}' is not installed through NFG Hub.");
-        EnsureExpectedProduct(state, installationKey, expectedProductId);
+        EnsureMutableSlotState(state, installationKey, expectedProductId);
         var plans = CreateStateFilePlans(state);
 
         foreach (var plan in plans)
@@ -637,6 +641,12 @@ public sealed class ManagedFilesInstaller
                 plan,
                 requireFile: true,
                 cancellationToken);
+            var expectedPath = GetStateFilePath(plan, state.IsEnabled);
+            if (!PathsEqual(plan.ExistingPath!, expectedPath))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Managed file '{plan.ExistingPath}' does not match the saved activation state.");
+            }
         }
 
         if (state.IsEnabled == isEnabled)
@@ -645,70 +655,79 @@ public sealed class ManagedFilesInstaller
             return state;
         }
 
-        var moved = new List<(StateFilePlan Plan, string Source, string Destination)>();
+        var updatedState = state with { IsEnabled = isEnabled };
+        foreach (var plan in plans)
+        {
+            EnsurePathIsVacant(GetStateFilePath(plan, isEnabled));
+        }
+
+        var journal = new ManagedStateMutationJournal
+        {
+            SchemaVersion = ManagedStateMutationJournal.CurrentSchemaVersion,
+            OperationId = Guid.NewGuid().ToString("N"),
+            InstallationKey = installationKey,
+            Kind = ManagedStateMutationJournal.SetEnabledKind,
+            OldState = state,
+            NewState = updatedState
+        };
+        await _mutationJournalStore.SaveAsync(journal, cancellationToken);
+
         try
         {
+            await ObserveAsync(ManagedInstallerPhase.JournalDurable);
             foreach (var plan in plans)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var destination = isEnabled ? plan.TargetPath : plan.DisabledPath;
-                if (!IsRegularFile(plan.ExistingPath!) ||
+                var source = GetStateFilePath(plan, state.IsEnabled);
+                var destination = GetStateFilePath(plan, updatedState.IsEnabled);
+                if (!IsRegularFile(source) ||
                     !await MatchesAsync(
-                        plan.ExistingPath!,
+                        source,
                         plan.State.SizeBytes,
                         plan.State.Sha256,
                         cancellationToken))
                 {
                     throw new ManagedFilesInstallException(
-                        $"Managed file '{plan.ExistingPath}' changed before activation update.");
+                        $"Managed file '{source}' changed before activation update.");
                 }
 
                 EnsurePathIsVacant(destination);
-                File.Move(plan.ExistingPath!, destination);
-                moved.Add((plan, plan.ExistingPath!, destination));
+                File.Move(source, destination);
+                await ObserveAsync(ManagedInstallerPhase.FileMutationCompleted);
             }
 
-            var updatedState = state with { IsEnabled = isEnabled };
+            await ObserveAsync(ManagedInstallerPhase.ActivationComplete);
             await _stateStore.SaveAsync(updatedState, cancellationToken);
-            return updatedState;
+            await ObserveAsync(ManagedInstallerPhase.StateCommitted);
         }
-        catch (Exception operationError)
+        catch (Exception operationError) when (
+            operationError is not ManagedInstallerInterruptionException)
         {
-            var rollbackErrors = new List<Exception>();
-            foreach (var move in moved.AsEnumerable().Reverse())
+            try
             {
-                try
-                {
-                    if (!IsRegularFile(move.Destination) ||
-                        File.Exists(move.Source) ||
-                        Directory.Exists(move.Source) ||
-                        !await MatchesAsync(
-                            move.Destination,
-                            move.Plan.State.SizeBytes,
-                            move.Plan.State.Sha256,
-                            CancellationToken.None))
-                    {
-                        throw new ManagedFilesInstallException(
-                            $"Managed file '{move.Destination}' could not be restored automatically.");
-                    }
-
-                    File.Move(move.Destination, move.Source);
-                }
-                catch (Exception rollbackError)
-                {
-                    rollbackErrors.Add(rollbackError);
-                }
+                await RecoverStateMutationCoreAsync(journal);
             }
-
-            if (rollbackErrors.Count != 0)
+            catch (Exception recoveryError)
             {
                 throw new ManagedFilesInstallException(
                     "Product state change failed and automatic rollback was incomplete.",
-                    new AggregateException([operationError, .. rollbackErrors]));
+                    new AggregateException(operationError, recoveryError));
             }
 
             throw;
         }
+
+        try
+        {
+            await RecoverStateMutationCoreAsync(journal);
+        }
+        catch
+        {
+            // The state commit is authoritative. The retained mutation journal
+            // makes non-cancellable cleanup retryable on startup.
+        }
+
+        return updatedState;
     }
 
     private async Task UninstallCoreAsync(
@@ -722,77 +741,290 @@ public sealed class ManagedFilesInstaller
             return;
         }
 
-        EnsureExpectedProduct(state, installationKey, expectedProductId);
+        EnsureMutableSlotState(state, installationKey, expectedProductId);
         var targets = CreateStateFilePlans(state);
         foreach (var target in targets)
         {
             cancellationToken.ThrowIfCancellationRequested();
             target.ExistingPath = await LocateManagedFileAsync(
                 target,
-                requireFile: false,
+                requireFile: true,
                 cancellationToken);
+            var expectedPath = GetStateFilePath(target, state.IsEnabled);
+            if (!PathsEqual(target.ExistingPath!, expectedPath))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Managed file '{target.ExistingPath}' does not match the saved activation state.");
+            }
         }
 
         var operationId = Guid.NewGuid().ToString("N");
-        var moved = new List<(string Source, string Tombstone)>();
+        foreach (var target in targets)
+        {
+            EnsurePathIsVacant(GetRemovalTombstonePath(
+                GetStateFilePath(target, state.IsEnabled),
+                operationId));
+        }
+
+        var journal = new ManagedStateMutationJournal
+        {
+            SchemaVersion = ManagedStateMutationJournal.CurrentSchemaVersion,
+            OperationId = operationId,
+            InstallationKey = installationKey,
+            Kind = ManagedStateMutationJournal.UninstallKind,
+            OldState = state,
+            NewState = null
+        };
+        await _mutationJournalStore.SaveAsync(journal, cancellationToken);
+
         try
         {
-            foreach (var target in targets.Where(target => target.ExistingPath is not null))
+            await ObserveAsync(ManagedInstallerPhase.JournalDurable);
+            foreach (var target in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!IsRegularFile(target.ExistingPath!) ||
+                var source = GetStateFilePath(target, state.IsEnabled);
+                if (!IsRegularFile(source) ||
                     !await MatchesAsync(
-                        target.ExistingPath!,
+                        source,
                         target.State.SizeBytes,
                         target.State.Sha256,
                         cancellationToken))
                 {
                     throw new ManagedFilesInstallException(
-                        $"Installed file '{target.ExistingPath}' changed before removal.");
+                        $"Installed file '{source}' changed before removal.");
                 }
 
-                var tombstone = $"{target.ExistingPath}.nfg-remove-{operationId}.disabled";
+                var tombstone = GetRemovalTombstonePath(source, operationId);
                 EnsurePathIsVacant(tombstone);
-                File.Move(target.ExistingPath!, tombstone);
-                moved.Add((target.ExistingPath!, tombstone));
+                File.Move(source, tombstone);
+                await ObserveAsync(ManagedInstallerPhase.FileMutationCompleted);
             }
 
+            await ObserveAsync(ManagedInstallerPhase.ActivationComplete);
             _stateStore.Delete(installationKey);
+            await ObserveAsync(ManagedInstallerPhase.StateCommitted);
         }
-        catch
+        catch (Exception operationError) when (
+            operationError is not ManagedInstallerInterruptionException)
         {
-            foreach (var (source, tombstone) in moved.AsEnumerable().Reverse())
+            try
             {
-                if (File.Exists(tombstone) &&
-                    !File.Exists(source) &&
-                    !Directory.Exists(source))
-                {
-                    File.Move(tombstone, source);
-                }
+                await RecoverStateMutationCoreAsync(journal);
+            }
+            catch (Exception recoveryError)
+            {
+                throw new ManagedFilesInstallException(
+                    "Product removal failed and automatic recovery was incomplete.",
+                    new AggregateException(operationError, recoveryError));
             }
 
             throw;
         }
 
-        foreach (var (_, tombstone) in moved)
+        try
         {
-            if (File.Exists(tombstone))
-            {
-                File.Delete(tombstone);
-            }
+            await RecoverStateMutationCoreAsync(journal);
+        }
+        catch
+        {
+            // State absence is the uninstall commit point. The retained journal
+            // keeps tombstone cleanup retryable without restoring the product.
         }
     }
 
     private async Task RecoverPendingOperationCoreAsync(string installationKey)
     {
-        var journal = await _journalStore.LoadAsync(
+        var updateJournal = await _journalStore.LoadAsync(
             installationKey,
             CancellationToken.None);
-        if (journal is not null)
+        var mutationJournal = await _mutationJournalStore.LoadAsync(
+            installationKey,
+            CancellationToken.None);
+        if (updateJournal is not null && mutationJournal is not null)
         {
-            await RecoverJournalCoreAsync(journal);
+            throw new ManagedFilesInstallException(
+                $"Installation slot '{installationKey}' has conflicting pending journals.");
+        }
+
+        if (updateJournal is not null)
+        {
+            await RecoverJournalCoreAsync(updateJournal);
+        }
+        else if (mutationJournal is not null)
+        {
+            await RecoverStateMutationCoreAsync(mutationJournal);
         }
     }
+
+    private async Task RecoverStateMutationCoreAsync(ManagedStateMutationJournal journal)
+    {
+        var currentState = await _stateStore.LoadAsync(
+            journal.InstallationKey,
+            CancellationToken.None);
+        switch (journal.Kind)
+        {
+            case ManagedStateMutationJournal.SetEnabledKind:
+                if (StatesEqual(currentState, journal.NewState))
+                {
+                    await VerifyStateFilesAsync(journal.NewState!, CancellationToken.None);
+                    _mutationJournalStore.Delete(journal.InstallationKey);
+                    return;
+                }
+
+                if (!StatesEqual(currentState, journal.OldState))
+                {
+                    throw UnknownStateMutationOutcome(journal);
+                }
+
+                await RollBackSetEnabledAsync(journal);
+                return;
+
+            case ManagedStateMutationJournal.UninstallKind:
+                if (currentState is null)
+                {
+                    await FinalizeUninstallAsync(journal);
+                    return;
+                }
+
+                if (!StatesEqual(currentState, journal.OldState))
+                {
+                    throw UnknownStateMutationOutcome(journal);
+                }
+
+                await RollBackUninstallAsync(journal);
+                return;
+
+            default:
+                throw new ManagedFilesInstallException(
+                    $"State mutation journal for '{journal.InstallationKey}' has an unknown kind.");
+        }
+    }
+
+    private async Task RollBackSetEnabledAsync(ManagedStateMutationJournal journal)
+    {
+        var newState = journal.NewState
+            ?? throw new ManagedFilesInstallException("Set-enabled journal has no target state.");
+        foreach (var plan in CreateStateFilePlans(journal.OldState))
+        {
+            var oldPath = GetStateFilePath(plan, journal.OldState.IsEnabled);
+            var newPath = GetStateFilePath(plan, newState.IsEnabled);
+            EnsureMutationPathsAreRegularOrAbsent(oldPath, newPath);
+            var hasOld = File.Exists(oldPath);
+            var hasNew = File.Exists(newPath);
+            if (hasOld == hasNew)
+            {
+                throw new ManagedFilesInstallException(
+                    $"Activation rollback found ambiguous copies for '{plan.State.Destination}'.");
+            }
+
+            if (hasOld)
+            {
+                await VerifyMutationFileAsync(oldPath, plan.State);
+                continue;
+            }
+
+            await VerifyMutationFileAsync(newPath, plan.State);
+            File.Move(newPath, oldPath);
+        }
+
+        await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
+        _mutationJournalStore.Delete(journal.InstallationKey);
+    }
+
+    private async Task RollBackUninstallAsync(ManagedStateMutationJournal journal)
+    {
+        foreach (var plan in CreateStateFilePlans(journal.OldState))
+        {
+            var source = GetStateFilePath(plan, journal.OldState.IsEnabled);
+            var tombstone = GetRemovalTombstonePath(source, journal.OperationId);
+            EnsureMutationPathsAreRegularOrAbsent(source, tombstone);
+            var hasSource = File.Exists(source);
+            var hasTombstone = File.Exists(tombstone);
+            if (hasSource == hasTombstone)
+            {
+                throw new ManagedFilesInstallException(
+                    $"Uninstall rollback found ambiguous copies for '{plan.State.Destination}'.");
+            }
+
+            if (hasSource)
+            {
+                await VerifyMutationFileAsync(source, plan.State);
+                continue;
+            }
+
+            await VerifyMutationFileAsync(tombstone, plan.State);
+            File.Move(tombstone, source);
+        }
+
+        await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
+        _mutationJournalStore.Delete(journal.InstallationKey);
+    }
+
+    private async Task FinalizeUninstallAsync(ManagedStateMutationJournal journal)
+    {
+        foreach (var plan in CreateStateFilePlans(journal.OldState))
+        {
+            var source = GetStateFilePath(plan, journal.OldState.IsEnabled);
+            var tombstone = GetRemovalTombstonePath(source, journal.OperationId);
+            EnsureMutationPathsAreRegularOrAbsent(source, tombstone);
+            if (File.Exists(source))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Committed uninstall found an unexpected live file at '{source}'.");
+            }
+
+            if (!File.Exists(tombstone))
+            {
+                continue;
+            }
+
+            await VerifyMutationFileAsync(tombstone, plan.State);
+            File.Delete(tombstone);
+        }
+
+        _mutationJournalStore.Delete(journal.InstallationKey);
+    }
+
+    private static async Task VerifyMutationFileAsync(
+        string path,
+        InstalledFileState expected)
+    {
+        if (!IsRegularFile(path) ||
+            !await MatchesAsync(
+                path,
+                expected.SizeBytes,
+                expected.Sha256,
+                CancellationToken.None))
+        {
+            throw new ManagedFilesInstallException(
+                $"State mutation found an unrecognized file at '{path}'.");
+        }
+    }
+
+    private static void EnsureMutationPathsAreRegularOrAbsent(params string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path))
+            {
+                throw new ManagedFilesInstallException(
+                    $"State mutation path '{path}' is occupied by a directory.");
+            }
+
+            if (File.Exists(path) && !IsRegularFile(path))
+            {
+                throw new ManagedFilesInstallException(
+                    $"State mutation path '{path}' is a reparse point.");
+            }
+        }
+    }
+
+    private static ManagedFilesInstallException UnknownStateMutationOutcome(
+        ManagedStateMutationJournal journal) =>
+        new(
+            $"Recovery for '{journal.InstallationKey}' cannot identify the committed " +
+            $"'{journal.Kind}' outcome.");
 
     private async Task RecoverJournalCoreAsync(ManagedUpdateJournal journal)
     {
@@ -800,10 +1032,28 @@ public sealed class ManagedFilesInstaller
         var currentState = await _stateStore.LoadAsync(
             installationKey,
             CancellationToken.None);
+        if (journal.RollbackComplete)
+        {
+            if (!StatesEqual(currentState, journal.OldState))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Recovery for '{installationKey}' found completed rollback cleanup with non-old state.");
+            }
+
+            await FinalizeCompletedLegacyRollbackAsync(journal);
+            return;
+        }
+
         if (StatesEqual(currentState, journal.NewState))
         {
             await FinalizeCommittedOperationAsync(journal);
             return;
+        }
+
+        if (journal.CleanupPrepared)
+        {
+            throw new ManagedFilesInstallException(
+                $"Recovery for '{installationKey}' found a prepared cleanup with non-new state.");
         }
 
         if (!StatesEqual(currentState, journal.OldState))
@@ -813,6 +1063,41 @@ public sealed class ManagedFilesInstaller
         }
 
         await RollBackUncommittedOperationAsync(journal);
+    }
+
+    private async Task FinalizeCompletedLegacyRollbackAsync(ManagedUpdateJournal journal)
+    {
+        if (journal.SchemaVersion != 1 ||
+            !journal.RollbackComplete ||
+            journal.OldState is null)
+        {
+            throw new ManagedFilesInstallException(
+                "Only completed schema-v1 rollback cleanup can be finalized.");
+        }
+
+        await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
+        var unchanged = GetUnchangedDestinations(journal.OldState, journal.NewState);
+        foreach (var newPlan in CreateStateFilePlans(journal.NewState).Where(plan =>
+                     !unchanged.Contains(plan.State.Destination)))
+        {
+            var finalPath = GetStateFilePath(newPlan, journal.NewState.IsEnabled);
+            var stagePath = GetUpdateStagePath(finalPath, journal.OperationId);
+            var markerPath = GetUpdateNotActivatedMarkerPath(stagePath);
+            EnsureTemporaryPathIsNotDirectory(markerPath);
+            if (File.Exists(markerPath))
+            {
+                await DeleteVerifiedStageMarkerAsync(
+                    markerPath,
+                    journal.OperationId,
+                    newPlan.State.Destination,
+                    newPlan.State.SizeBytes,
+                    newPlan.State.Sha256,
+                    "not-activated");
+            }
+        }
+
+        await ObserveAsync(ManagedInstallerPhase.RollbackCleanupCompleted);
+        _journalStore.Delete(journal.EffectiveInstallationKey);
     }
 
     private async Task FinalizeCommittedOperationAsync(ManagedUpdateJournal journal)
@@ -833,18 +1118,92 @@ public sealed class ManagedFilesInstaller
 
         if (journal.OldState is not null)
         {
-            foreach (var oldPlan in CreateStateFilePlans(journal.OldState).Where(plan =>
-                         !unchanged.Contains(plan.State.Destination)))
+            if (journal.SchemaVersion == 1)
             {
-                var originalPath = GetStateFilePath(oldPlan, journal.OldState.IsEnabled);
-                await DeleteVerifiedOwnedFileIfPresentAsync(
-                    GetUpdateBackupPath(originalPath, journal.OperationId),
-                    oldPlan.State.SizeBytes,
-                    oldPlan.State.Sha256);
+                foreach (var oldPlan in CreateStateFilePlans(journal.OldState).Where(plan =>
+                             !unchanged.Contains(plan.State.Destination)))
+                {
+                    var originalPath = GetStateFilePath(oldPlan, journal.OldState.IsEnabled);
+                    await DeleteVerifiedOwnedFileIfPresentAsync(
+                        GetUpdateBackupPath(originalPath, journal.OperationId),
+                        oldPlan.State.SizeBytes,
+                        oldPlan.State.Sha256);
+                }
+            }
+            else
+            {
+                if (!journal.CleanupPrepared)
+                {
+                    await PrepareCommittedBackupCleanupAsync(journal, unchanged);
+                    journal = await _journalStore.MarkCleanupPreparedAsync(
+                        journal,
+                        CancellationToken.None);
+                    await ObserveAsync(ManagedInstallerPhase.CleanupPrepared);
+                }
+
+                await DeletePreparedBackupCleanupAsync(journal, unchanged);
             }
         }
 
         _journalStore.Delete(journal.EffectiveInstallationKey);
+    }
+
+    private static async Task PrepareCommittedBackupCleanupAsync(
+        ManagedUpdateJournal journal,
+        IReadOnlySet<string> unchanged)
+    {
+        foreach (var oldPlan in CreateStateFilePlans(journal.OldState!).Where(plan =>
+                     !unchanged.Contains(plan.State.Destination)))
+        {
+            var originalPath = GetStateFilePath(oldPlan, journal.OldState!.IsEnabled);
+            var backupPath = GetUpdateBackupPath(originalPath, journal.OperationId);
+            var cleanupPath = GetUpdateBackupCleanupPath(backupPath);
+            EnsureMutationPathsAreRegularOrAbsent(backupPath, cleanupPath);
+            var hasBackup = File.Exists(backupPath);
+            var hasCleanup = File.Exists(cleanupPath);
+            if (hasBackup && hasCleanup)
+            {
+                throw new ManagedFilesInstallException(
+                    $"Committed cleanup found duplicate backup evidence for '{originalPath}'.");
+            }
+
+            if (hasBackup)
+            {
+                await VerifyMutationFileAsync(backupPath, oldPlan.State);
+                File.Move(backupPath, cleanupPath);
+            }
+            else if (hasCleanup)
+            {
+                await VerifyMutationFileAsync(cleanupPath, oldPlan.State);
+            }
+            else
+            {
+                throw new ManagedFilesInstallException(
+                    $"Committed cleanup cannot find backup evidence for '{originalPath}'.");
+            }
+        }
+    }
+
+    private async Task DeletePreparedBackupCleanupAsync(
+        ManagedUpdateJournal journal,
+        IReadOnlySet<string> unchanged)
+    {
+        foreach (var oldPlan in CreateStateFilePlans(journal.OldState!).Where(plan =>
+                     !unchanged.Contains(plan.State.Destination)))
+        {
+            var originalPath = GetStateFilePath(oldPlan, journal.OldState!.IsEnabled);
+            var cleanupPath = GetUpdateBackupCleanupPath(
+                GetUpdateBackupPath(originalPath, journal.OperationId));
+            EnsureMutationPathsAreRegularOrAbsent(cleanupPath);
+            if (!File.Exists(cleanupPath))
+            {
+                continue;
+            }
+
+            await VerifyMutationFileAsync(cleanupPath, oldPlan.State);
+            File.Delete(cleanupPath);
+            await ObserveAsync(ManagedInstallerPhase.FileCleanupCompleted);
+        }
     }
 
     private static async Task FinalizeStagingEvidenceAsync(
@@ -1141,6 +1500,12 @@ public sealed class ManagedFilesInstaller
                     $"Rollback found a directory at '{finalPath}'.");
             }
 
+            if (File.Exists(finalPath) && !IsRegularFile(finalPath))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Rollback found a reparse point at '{finalPath}'.");
+            }
+
             if (File.Exists(finalPath) &&
                 await MatchesAsync(
                     finalPath,
@@ -1187,7 +1552,8 @@ public sealed class ManagedFilesInstaller
 
                 if (File.Exists(backupPath))
                 {
-                    if (!await MatchesAsync(
+                    if (!IsRegularFile(backupPath) ||
+                        !await MatchesAsync(
                             backupPath,
                             oldPlan.State.SizeBytes,
                             oldPlan.State.Sha256,
@@ -1199,7 +1565,8 @@ public sealed class ManagedFilesInstaller
 
                     if (File.Exists(originalPath))
                     {
-                        if (!await MatchesAsync(
+                        if (!IsRegularFile(originalPath) ||
+                            !await MatchesAsync(
                                 originalPath,
                                 oldPlan.State.SizeBytes,
                                 oldPlan.State.Sha256,
@@ -1209,14 +1576,16 @@ public sealed class ManagedFilesInstaller
                                 $"Rollback cannot restore occupied path '{originalPath}'.");
                         }
 
-                        File.Delete(backupPath);
+                        throw new ManagedFilesInstallException(
+                            $"Rollback cannot prove ownership of update backup '{backupPath}'.");
                     }
                     else
                     {
                         File.Move(backupPath, originalPath);
                     }
                 }
-                else if (!await MatchesAsync(
+                else if (!IsRegularFile(originalPath) ||
+                         !await MatchesAsync(
                              originalPath,
                              oldPlan.State.SizeBytes,
                              oldPlan.State.Sha256,
@@ -1237,7 +1606,13 @@ public sealed class ManagedFilesInstaller
                 CancellationToken.None);
         }
 
-        _journalStore.Delete(journal.EffectiveInstallationKey);
+        if (journal.SchemaVersion == 1)
+        {
+            journal = await _journalStore.MarkRollbackCompleteAsync(
+                journal,
+                CancellationToken.None);
+        }
+
         foreach (var (plan, markerPath) in deferredNotActivatedMarkers)
         {
             await DeleteVerifiedStageMarkerAsync(
@@ -1248,6 +1623,13 @@ public sealed class ManagedFilesInstaller
                 plan.State.Sha256,
                 "not-activated");
         }
+
+        if (journal.SchemaVersion == 1)
+        {
+            await ObserveAsync(ManagedInstallerPhase.RollbackCleanupCompleted);
+        }
+
+        _journalStore.Delete(journal.EffectiveInstallationKey);
     }
 
     private static void ValidateOperationPaths(
@@ -1266,7 +1648,9 @@ public sealed class ManagedFilesInstaller
                      !unchangedDestinations.Contains(plan.State.Destination)))
         {
             var originalPath = GetStateFilePath(oldPlan, oldState!.IsEnabled);
-            EnsurePathIsVacant(GetUpdateBackupPath(originalPath, operationId));
+            var backupPath = GetUpdateBackupPath(originalPath, operationId);
+            EnsurePathIsVacant(backupPath);
+            EnsurePathIsVacant(GetUpdateBackupCleanupPath(backupPath));
         }
 
         foreach (var newPlan in newPlans.Where(plan =>
@@ -1548,6 +1932,27 @@ public sealed class ManagedFilesInstaller
         }
     }
 
+    private static void EnsureMutableSlotState(
+        InstalledProductState state,
+        string installationKey,
+        string expectedProductId)
+    {
+        EnsureExpectedProduct(state, installationKey, expectedProductId);
+        if (state.SchemaVersion != 2 ||
+            !string.Equals(state.InstallationKey, installationKey, StringComparison.Ordinal))
+        {
+            throw new ManagedFilesInstallException(
+                $"Installation slot '{installationKey}' must be migrated before mutation.");
+        }
+
+        if (string.IsNullOrWhiteSpace(state.SteamAppId) ||
+            !state.SteamAppId.All(char.IsAsciiDigit))
+        {
+            throw new ManagedFilesInstallException(
+                $"Installation slot '{installationKey}' has no stable Steam application identity.");
+        }
+    }
+
     private static string GetExpectedProductError(
         string installationKey,
         string? expectedProductId,
@@ -1803,6 +2208,12 @@ public sealed class ManagedFilesInstaller
     private static string GetUpdateBackupPath(string originalPath, string operationId) =>
         $"{originalPath}.nfg-update-old-{operationId}.disabled";
 
+    private static string GetUpdateBackupCleanupPath(string backupPath) =>
+        $"{backupPath}.cleanup";
+
+    private static string GetRemovalTombstonePath(string sourcePath, string operationId) =>
+        $"{sourcePath}.nfg-remove-{operationId}.disabled";
+
     private static void EnsurePathIsVacant(string path)
     {
         if (File.Exists(path) || Directory.Exists(path))
@@ -1972,8 +2383,12 @@ internal enum ManagedInstallerPhase
     LockAcquired,
     JournalDurable,
     StagingComplete,
+    FileMutationCompleted,
     ActivationComplete,
-    StateCommitted
+    StateCommitted,
+    CleanupPrepared,
+    FileCleanupCompleted,
+    RollbackCleanupCompleted
 }
 
 internal sealed class ManagedInstallerInterruptionException(string message)
