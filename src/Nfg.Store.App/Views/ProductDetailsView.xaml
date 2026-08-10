@@ -115,6 +115,23 @@
                             <StackPanel Margin="0,22,0,0"
                                         MaxWidth="420"
                                         HorizontalAlignment="Left"
+                                        Visibility="{Binding HasMultipleVariants, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Margin="1,0,0,7"
+                                           Text="ЯЗЫК ДЛЯ УСТАНОВКИ"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <ComboBox MinWidth="320"
+                                          ItemsSource="{Binding AvailableVariants}"
+                                          SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanSelectVariant}"
+                                          AutomationProperties.Name="Выбор языка продукта"
+                                          Style="{StaticResource VariantComboBoxStyle}" />
+                            </StackPanel>
+
+                            <StackPanel Margin="0,14,0,0"
+                                        MaxWidth="420"
+                                        HorizontalAlignment="Left"
                                         Visibility="{Binding HasMultipleVersions, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Margin="1,0,0,7"
                                            Text="ВЕРСИЯ ДЛЯ УСТАНОВКИ"
@@ -132,18 +149,9 @@
                             <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
                                 <Button MinWidth="185"
                                         Style="{StaticResource PrimaryButtonStyle}"
-                                        Command="{Binding InstallCommand}"
-                                        IsEnabled="{Binding CanInstall}"
-                                        Visibility="{Binding IsNotInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        Command="{Binding ApplyVariantCommand}"
+                                        IsEnabled="{Binding CanApply}">
                                     <TextBlock Text="{Binding PrimaryActionText}"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </Button>
-                                <Button MinWidth="185"
-                                        Style="{StaticResource PrimaryButtonStyle}"
-                                        Command="{Binding UpdateCommand}"
-                                        IsEnabled="{Binding CanUpdate}"
-                                        Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <TextBlock Text="{Binding UpdateActionText}"
                                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                                 </Button>
                             </StackPanel>
@@ -182,12 +190,12 @@
                                     BorderThickness="1"
                                     CornerRadius="10">
                                 <StackPanel>
-                                    <TextBlock Text="ВЕРСИЯ В КАТАЛОГЕ"
+                                    <TextBlock Text="ВЫБРАНО"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource TextSecondaryBrush}" />
                                     <TextBlock Margin="0,5,0,0"
-                                               Text="{Binding SelectedVersionLabel}"
+                                               Text="{Binding SelectedSelectionText}"
                                                FontFamily="Cascadia Mono, Consolas"
                                                FontSize="15"
                                                Foreground="{StaticResource AccentBrush}" />
@@ -198,7 +206,7 @@
                                                    FontWeight="Bold"
                                                    Foreground="{StaticResource TextSecondaryBrush}" />
                                         <TextBlock Margin="0,3,0,0"
-                                                   Text="{Binding InstalledVersionLabel}"
+                                                   Text="{Binding InstalledSelectionText}"
                                                    FontFamily="Cascadia Mono, Consolas"
                                                    FontSize="13"
                                                    Foreground="#D7DCE2" />

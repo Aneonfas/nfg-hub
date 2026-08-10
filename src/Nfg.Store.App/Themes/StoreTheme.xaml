@@ -206,6 +206,21 @@
         </StackPanel>
     </DataTemplate>
 
+    <DataTemplate x:Key="ProductVariantOptionTemplate">
+        <StackPanel>
+            <TextBlock Text="{Binding DisplayLabel}"
+                       FontFamily="Cascadia Mono, Consolas"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+            <TextBlock Margin="0,3,0,0"
+                       Text="{Binding Subtitle}"
+                       TextTrimming="CharacterEllipsis"
+                       FontSize="11"
+                       Foreground="{StaticResource TextSecondaryBrush}" />
+        </StackPanel>
+    </DataTemplate>
+
     <Style x:Key="VersionComboBoxItemStyle" TargetType="ComboBoxItem">
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
         <Setter Property="Background" Value="Transparent" />
@@ -319,6 +334,12 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <Style x:Key="VariantComboBoxStyle"
+           TargetType="ComboBox"
+           BasedOn="{StaticResource VersionComboBoxStyle}">
+        <Setter Property="ItemTemplate" Value="{StaticResource ProductVariantOptionTemplate}" />
     </Style>
 
     <Style TargetType="CheckBox">

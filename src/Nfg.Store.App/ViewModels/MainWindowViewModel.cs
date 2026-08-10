@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Nfg.Store.App.Infrastructure;
 using Nfg.Store.App.Services;
+using Nfg.Store.Contracts;
 using Nfg.Store.Core;
 using Nfg.Store.Installation;
 
@@ -29,20 +30,27 @@ public sealed class MainWindowViewModel : ObservableObject
         var catalog = catalogResult.Catalog;
         CatalogName = catalog.DisplayName;
 
-        var productStates = new List<ProductStateViewModel>(catalog.Products.Count);
-        foreach (var product in catalog.Products)
+        var productGroups = GroupProducts(catalog.Products);
+        var productStates = new List<ProductStateViewModel>(productGroups.Count);
+        foreach (var products in productGroups)
         {
-            installedStates.TryGetValue(product.Id, out var installedState);
+            var installationKey = ProductInstallationKey.FromManifest(products[0]);
+            installedStates.TryGetValue(installationKey, out var installedState);
+            var detectionProduct = products.FirstOrDefault(product =>
+                    string.Equals(
+                        product.Id,
+                        installedState?.ProductId,
+                        StringComparison.Ordinal))
+                ?? products[0];
             var gameInstallation = installationCoordinator.DetectGameInstallation(
-                product,
+                detectionProduct,
                 installedState?.GameRoot);
             productStates.Add(new ProductStateViewModel(
-                new ProductViewModel(product),
-                product,
+                products,
                 installationCoordinator,
                 libraryStore,
                 installedState,
-                libraryProductIds.Contains(product.Id),
+                products.Any(product => libraryProductIds.Contains(product.Id)),
                 gameInstallation?.BuildId));
         }
         _productStates = productStates;
@@ -137,5 +145,34 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             item.IsSelected = ReferenceEquals(item, destination);
         }
+    }
+
+    private static IReadOnlyList<IReadOnlyList<ProductManifest>> GroupProducts(
+        IReadOnlyList<ProductManifest> products)
+    {
+        var groups = new List<List<ProductManifest>>(products.Count);
+        var familyIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var product in products)
+        {
+            if (product.FamilyId is not { } familyId)
+            {
+                groups.Add([product]);
+                continue;
+            }
+
+            if (!familyIndexes.TryGetValue(familyId, out var groupIndex))
+            {
+                groupIndex = groups.Count;
+                familyIndexes.Add(familyId, groupIndex);
+                groups.Add([]);
+            }
+
+            groups[groupIndex].Add(product);
+        }
+
+        return groups
+            .Select(group => (IReadOnlyList<ProductManifest>)group.ToArray())
+            .ToArray();
     }
 }

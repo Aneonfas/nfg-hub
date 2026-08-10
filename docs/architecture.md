@@ -22,7 +22,7 @@ accepted by NFG Hub 0.1.1. Schema v2 uses strict safe ASCII reverse-DNS product
 and dependency identifiers and adds three optional variant fields, all of which
 are required for a `localization` product:
 
-- `familyId` is the stable product family used for future UI grouping.
+- `familyId` is the stable product family used for UI grouping.
 - `locale` is the variant's structurally valid BCP-47 language tag.
 - `exclusiveGroup` is the stable id of a shared installation slot.
 
@@ -33,11 +33,12 @@ same Steam AppID and use the same installation strategy. This cross-validation
 is performed only after the complete catalog has loaded and before a remote
 copy can replace the cache.
 
-The future installation-slot stage will derive
-`installationKey = exclusiveGroup ?? productId`. That key will identify shared
-installation state and locks so language variants in one group can be switched
-mutually exclusively. This stage only reserves and validates the metadata: the
-current installer, state files, locks, migration, and UI still use `productId`.
+The Hub derives `installationKey = exclusiveGroup ?? productId`. The key names
+the installation state JSON, transaction journal, and cross-process lock;
+`productId` in schema-v2 installation state identifies the active variant.
+`familyId` and `locale` remain catalog data and are not duplicated in device
+state. Ungrouped products retain `installationKey = productId` and therefore do
+not share mutation state with a language family.
 
 The required `release` field is the current/default release and keeps schema-v1
 catalogs and older clients working. The optional `releases` array contains
@@ -78,8 +79,10 @@ the user may confirm that installation or select another published version from
 the version list. An exact match is a recommendation, not a hard installation
 requirement.
 
-When switching versions, the Hub downloads and validates the complete selected
-package before touching the game. Upgrade and downgrade use the same transaction:
+Installing, switching language variants, and switching versions use one
+transaction. The Hub downloads and validates the complete selected package
+before touching the game. Upgrade, downgrade, and a cross-product switch use the
+same transaction, including when two variants have the same semantic version:
 the Hub writes a persisted update journal, stages every changed file beside its
 destination, moves verified old files to transaction-specific backups, activates
 the staged files, verifies the new state, and atomically commits the installation
@@ -88,9 +91,20 @@ JSON. The previous enabled or disabled state is preserved, and
 was applied. Before the commit point any failure restores the old files; after it,
 recovery completes cleanup without reverting the installed version. Pending
 journals under `state/transactions` are recovered before installation state is
-loaded at Hub startup. Every product mutation also holds a per-product lock file
-under `state/locks`, so separate Hub processes cannot interleave installation,
-version switching, activation, removal, or recovery.
+loaded at Hub startup. Every mutation holds an installation-slot lock under
+`state/locks`, so separate Hub processes cannot interleave installation,
+variant or version switching, activation, removal, or recovery. Callers also
+provide the expected active `productId`; an inactive family member cannot alter
+or remove its active sibling.
+
+Schema-v1 journals are recovered before state migration. Startup then unions
+library ids with every discovered installation state's `productId` before
+loading the catalog. Schema-v1 state is migrated under the destination slot
+lock, with an exact byte-for-byte source backup in
+`state/migrations/installations-v1`. Migration is atomic and idempotent. A
+legacy/current conflict, two legacy members mapping to one slot, malformed or
+ambiguous state, or an unrecognized recovery state fails closed without
+rewriting the original evidence or managed game files.
 
 ## Catalog and library state
 
@@ -99,17 +113,20 @@ discovery surfaces and open a dedicated product page; they do not install a
 package directly. A new product is installed from its page, while Library can
 retry or reinstall a product that is already a library member.
 
-Starting an installation first persists the product id in
+After a successful installation the active product id is persisted in
 `%LOCALAPPDATA%\NFG\Hub\state\library.json`. Catalog, product details, and
-Library then observe the same long-lived per-product view model, so download
-progress and errors survive page navigation. Existing managed installations
-are added to the library state during startup migration.
+Library observe one long-lived view model per family (or per standalone
+product), so language selection, progress, errors, and installed state stay in
+sync across surfaces. A family presents language selection before version
+selection and distinguishes the installed variant from the selected target.
+Existing managed installations are added to library state during startup
+migration.
 
-Catalog loading also treats every local library product id as required. A
-remote catalog that omits one is rejected before it can replace the cache, and
-the Hub falls back to the last validated catalog. Published products therefore
-cannot silently disappear while a user still needs the Hub to disable or
-remove them.
+Catalog loading treats the union of local library ids and all product ids found
+in installation state as required. A remote catalog that omits one is rejected
+before it can replace the cache, and the Hub falls back to the last validated
+catalog. Published products therefore cannot silently disappear while a user
+still needs the Hub to switch, disable, or remove them.
 
 Library membership and device installation are separate states. Removing a
 product from the device verifies and removes its managed files but keeps the
@@ -132,11 +149,15 @@ The primary index is published at
 `https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/catalog.json`.
 This root endpoint is the Product Manifest schema-v1 feed: every product
 manifest it references remains schema v1 so the released Hub 0.1.1 continues
-receiving current product releases. Product Manifest v2 is exercised by
-synthetic contract tests only in this stage. A future `/v2/catalog.json`
-endpoint will reference a separate `/v2/products/` tree and will be selected by
-a newer Hub only together with installation-slot state, migration, switching,
-and UI. Root-referenced product files must never be repurposed as v2 manifests.
+receiving current product releases. The Hub accepts Product Manifest v2, but no
+public v2 product is consumed in this stage; rollout fixtures remain synthetic.
+A future `/v2/catalog.json`
+endpoint will reference a separate `/v2/products/` tree. That rollout remains
+out of scope here: the app still reads the legacy root endpoint and uses the
+existing cache and bundled-catalog namespace. When a separate v2 endpoint is
+introduced, it must also receive a separate cache/bundled namespace so legacy
+fallback content cannot be replaced or misread. Root-referenced product files
+must never be repurposed as v2 manifests.
 
 At startup the app downloads the index and every referenced product manifest,
 validates the complete set, and only then replaces cached files. The catalog

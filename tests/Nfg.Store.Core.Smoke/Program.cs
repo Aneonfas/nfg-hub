@@ -20,8 +20,32 @@ if (args.Length > 0)
         return;
     }
 
+    if (args is ["--product-family-view-model"])
+    {
+        var focusedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "nfg-store-family-vm-smoke",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(focusedRoot);
+            await ProductFamilyViewModelSmoke.RunAsync(focusedRoot);
+            Console.WriteLine("NFG Hub product-family view-model smoke checks passed.");
+        }
+        finally
+        {
+            if (Directory.Exists(focusedRoot))
+            {
+                Directory.Delete(focusedRoot, recursive: true);
+            }
+        }
+
+        return;
+    }
+
     throw new ArgumentException(
-        "Usage: Nfg.Store.Core.Smoke [--validate-catalog <catalog-root>]");
+        "Usage: Nfg.Store.Core.Smoke " +
+        "[--validate-catalog <catalog-root> | --product-family-view-model]");
 }
 
 var catalogUri = new Uri("https://catalog.test/catalog.json");
@@ -43,12 +67,15 @@ try
     await CheckMultipleSteamInstallationsUseExactBuildAsync();
     CheckFallbackReleasePresentation();
     CheckProductUpdatePresentation();
+    await ProductFamilyViewModelSmoke.RunAsync(testRoot);
     CheckAppSettingsPersistence();
     CheckAppDataMigration();
     await CheckCatalogSourcesAsync();
     await CheckRichCatalogValidationAsync();
     await CheckProductSchemaV2ValidationAsync();
     await InstallationStateV2Smoke.RunAsync(testRoot);
+    await ManagedUpdateJournalV2Smoke.RunAsync(testRoot);
+    await ManagedVariantInstallerSmoke.RunAsync(testRoot);
     CheckInstallationCatalogRequirementUnion();
     await CheckProductLibraryStoreAsync();
     await CheckPackageDownloadAndValidationAsync();
@@ -1564,16 +1591,16 @@ async Task CheckManagedUpdateRecoveryAsync(
     var rollbackDataRoot = Path.Combine(testRoot, "update-recovery-rollback-data");
     var rollbackStore = new InstallationStateStore(rollbackDataRoot);
     var rollbackInstaller = new ManagedFilesInstaller(rollbackStore);
-    var rollbackOldState = (await rollbackInstaller.InstallAsync(
+    var rollbackOldState = ToLegacyState((await rollbackInstaller.InstallAsync(
         oldPackage,
         oldProduct,
-        rollbackGameRoot)).State;
+        rollbackGameRoot)).State);
+    await WriteLegacyStateAsync(rollbackDataRoot, rollbackOldState);
     var rollbackNewState = CreateUpdatedState(
         rollbackOldState,
         newPackage,
         newProduct);
     var rollbackOperationId = new string('a', 32);
-    var rollbackJournalStore = new ManagedUpdateJournalStore(rollbackStore);
     var rollbackJournal = new ManagedUpdateJournal
     {
         SchemaVersion = 1,
@@ -1582,10 +1609,10 @@ async Task CheckManagedUpdateRecoveryAsync(
         OldState = rollbackOldState,
         NewState = rollbackNewState
     };
-    await rollbackJournalStore.SaveAsync(rollbackJournal);
+    await WriteLegacyJournalAsync(rollbackDataRoot, rollbackJournal);
     await AssertThrowsAsync<InstallationStateException>(
-        () => rollbackJournalStore.SaveAsync(rollbackJournal),
-        "A pending update journal must not be overwritten by another transaction.");
+        () => new ManagedUpdateJournalStore(rollbackStore).SaveAsync(rollbackJournal),
+        "The v2 journal writer must reject a legacy journal.");
     var rollbackBackupPath =
         $"{rollbackTargetPath}.nfg-update-old-{rollbackOperationId}.disabled";
     File.Move(rollbackTargetPath, rollbackBackupPath);
@@ -1607,13 +1634,14 @@ async Task CheckManagedUpdateRecoveryAsync(
     var commitDataRoot = Path.Combine(testRoot, "update-recovery-commit-data");
     var commitStore = new InstallationStateStore(commitDataRoot);
     var commitInstaller = new ManagedFilesInstaller(commitStore);
-    var commitOldState = (await commitInstaller.InstallAsync(
+    var commitOldState = ToLegacyState((await commitInstaller.InstallAsync(
         oldPackage,
         oldProduct,
-        commitGameRoot)).State;
+        commitGameRoot)).State);
+    await WriteLegacyStateAsync(commitDataRoot, commitOldState);
     var commitNewState = CreateUpdatedState(commitOldState, newPackage, newProduct);
     var commitOperationId = new string('b', 32);
-    await new ManagedUpdateJournalStore(commitStore).SaveAsync(new ManagedUpdateJournal
+    await WriteLegacyJournalAsync(commitDataRoot, new ManagedUpdateJournal
     {
         SchemaVersion = 1,
         OperationId = commitOperationId,
@@ -1625,7 +1653,7 @@ async Task CheckManagedUpdateRecoveryAsync(
         $"{commitTargetPath}.nfg-update-old-{commitOperationId}.disabled";
     File.Move(commitTargetPath, commitBackupPath);
     await File.WriteAllBytesAsync(commitTargetPath, newPayload);
-    await commitStore.SaveAsync(commitNewState);
+    await WriteLegacyStateAsync(commitDataRoot, commitNewState);
 
     await commitInstaller.RecoverPendingOperationsAsync();
     Assert(
@@ -1656,6 +1684,56 @@ static InstalledProductState CreateUpdatedState(
             Sha256 = file.Sha256
         }).ToArray()
     };
+
+static InstalledProductState ToLegacyState(InstalledProductState state) =>
+    state with
+    {
+        SchemaVersion = 1,
+        InstallationKey = null
+    };
+
+static async Task WriteLegacyStateAsync(
+    string dataRoot,
+    InstalledProductState state)
+{
+    var path = Path.Combine(
+        dataRoot,
+        "state",
+        "installations",
+        $"{state.ProductId}.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    await File.WriteAllTextAsync(
+        path,
+        JsonSerializer.Serialize(
+            state,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+}
+
+static async Task WriteLegacyJournalAsync(
+    string dataRoot,
+    ManagedUpdateJournal journal)
+{
+    var productId = journal.ProductId
+        ?? throw new InvalidOperationException("Legacy journal fixture has no product id.");
+    var path = Path.Combine(
+        dataRoot,
+        "state",
+        "transactions",
+        $"{productId}.update.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    await File.WriteAllTextAsync(
+        path,
+        JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = 1,
+                journal.OperationId,
+                productId,
+                journal.OldState,
+                journal.NewState
+            },
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+}
 
 static ProductManifest CreateBranchProduct()
 {

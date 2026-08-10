@@ -95,25 +95,24 @@
                                                     Command="{Binding DataContext.OpenProductCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                     CommandParameter="{Binding}" />
                                             <StackPanel Margin="18,0,0,0"
-                                                        VerticalAlignment="Center"
-                                                        Orientation="Horizontal">
+                                                        VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal"
                                                             Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                    <TextBlock Text="Установлена "
+                                                    <TextBlock Text="Установлено: "
                                                                Foreground="{StaticResource TextSecondaryBrush}" />
-                                                    <TextBlock Text="{Binding InstalledVersionLabel}"
+                                                    <TextBlock Text="{Binding InstalledSelectionText}"
                                                                FontFamily="Cascadia Mono, Consolas"
                                                                Foreground="#D7DCE2" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal"
-                                                            Visibility="{Binding IsNotInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                    <TextBlock Text="В каталоге "
+                                                <StackPanel Margin="0,3,0,0"
+                                                            Orientation="Horizontal">
+                                                    <TextBlock Text="Выбрано: "
                                                                Foreground="{StaticResource TextSecondaryBrush}" />
-                                                    <TextBlock Text="{Binding SelectedVersionLabel}"
+                                                    <TextBlock Text="{Binding SelectedSelectionText}"
                                                                FontFamily="Cascadia Mono, Consolas"
                                                                Foreground="#D7DCE2" />
                                                 </StackPanel>
-                                                <TextBlock Margin="14,0,0,0"
+                                                <TextBlock Margin="0,3,0,0"
                                                            Text="{Binding UpdateVersionText}"
                                                            FontSize="12"
                                                            Foreground="{StaticResource AmberBrush}"
@@ -168,6 +167,20 @@
 
                                     <StackPanel Grid.Column="2"
                                                 VerticalAlignment="Center">
+                                        <StackPanel Margin="0,0,0,12"
+                                                    Visibility="{Binding HasMultipleVariants, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Margin="1,0,0,7"
+                                                       Text="ЯЗЫК ДЛЯ УСТАНОВКИ"
+                                                       FontSize="10"
+                                                       FontWeight="Bold"
+                                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                                            <ComboBox ItemsSource="{Binding AvailableVariants}"
+                                                      SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                                                      IsEnabled="{Binding CanSelectVariant}"
+                                                      AutomationProperties.Name="Выбор языка продукта"
+                                                      Style="{StaticResource VariantComboBoxStyle}" />
+                                        </StackPanel>
+
                                         <StackPanel Margin="0,0,0,20"
                                                     Visibility="{Binding HasMultipleVersions, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Margin="1,0,0,7"
@@ -182,27 +195,14 @@
                                                       Style="{StaticResource VersionComboBoxStyle}" />
                                         </StackPanel>
 
+                                        <Button Margin="0,0,0,20"
+                                                HorizontalAlignment="Stretch"
+                                                Style="{StaticResource PrimaryButtonStyle}"
+                                                Content="{Binding PrimaryActionText}"
+                                                Command="{Binding ApplyVariantCommand}"
+                                                IsEnabled="{Binding CanApply}" />
+
                                         <StackPanel Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <Button Margin="0,0,0,20"
-                                                    HorizontalAlignment="Stretch"
-                                                    Content="{Binding UpdateActionText}"
-                                                    Command="{Binding UpdateCommand}"
-                                                    IsEnabled="{Binding CanUpdate}">
-                                                <Button.Style>
-                                                    <Style TargetType="Button"
-                                                           BasedOn="{StaticResource PrimaryButtonStyle}">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding HasSelectedVersionChange}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding IsUpdateInProgress}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                            </Button>
                                             <TextBlock Text="УСТАНОВЛЕН НА УСТРОЙСТВЕ"
                                                        FontSize="10"
                                                        FontWeight="Bold"
@@ -234,27 +234,9 @@
                                                     HorizontalAlignment="Stretch"
                                                     Style="{StaticResource SecondaryButtonStyle}"
                                                     Content="Удалить с устройства"
-                                                    Command="{Binding RemoveFromDeviceCommand}"
-                                                    IsEnabled="{Binding CanRemoveFromDevice}" />
+                                                     Command="{Binding RemoveFromDeviceCommand}"
+                                                     IsEnabled="{Binding CanRemoveFromDevice}" />
                                         </StackPanel>
-
-                                        <Button Margin="0,0,0,0"
-                                                HorizontalAlignment="Stretch"
-                                                Content="{Binding PrimaryActionText}"
-                                                Command="{Binding InstallCommand}"
-                                                IsEnabled="{Binding CanInstall}">
-                                            <Button.Style>
-                                                <Style TargetType="Button"
-                                                       BasedOn="{StaticResource PrimaryButtonStyle}">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsInstalled}" Value="True">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Button.Style>
-                                        </Button>
 
                                         <Border Height="1"
                                                 Margin="0,24,0,20"
