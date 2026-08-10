@@ -125,6 +125,7 @@
                                 <ComboBox MinWidth="320"
                                           ItemsSource="{Binding AvailableVariants}"
                                           SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                                          Tag="{Binding SelectedVariant}"
                                           IsEnabled="{Binding CanSelectVariant}"
                                           AutomationProperties.Name="{loc:Loc Common.LanguageSelection}"
                                           Style="{StaticResource VariantComboBoxStyle}" />
@@ -143,8 +144,10 @@
                                           ItemsSource="{Binding AvailableVersions}"
                                           SelectedValuePath="Version"
                                           SelectedValue="{Binding SelectedVersionValue, Mode=TwoWay}"
+                                          Tag="{Binding SelectedVersion}"
                                           IsEnabled="{Binding CanSelectVersion}"
                                           AutomationProperties.Name="{loc:Loc Common.VersionSelection}"
+                                          AutomationProperties.HelpText="{Binding SelectedVersionValue}"
                                           Style="{StaticResource VersionComboBoxStyle}" />
                             </StackPanel>
 
