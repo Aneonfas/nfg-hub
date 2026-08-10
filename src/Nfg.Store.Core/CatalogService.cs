@@ -552,6 +552,7 @@ public sealed class CatalogService
                      product => product.FamilyId!,
                      StringComparer.OrdinalIgnoreCase))
         {
+            var firstProduct = family.First();
             var locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var product in family)
             {
@@ -560,11 +561,25 @@ public sealed class CatalogService
                     throw new CatalogValidationException(
                         $"Product family '{family.Key}' declares locale '{product.Locale}' more than once.");
                 }
+
+                if (!product.Type.Equals(firstProduct.Type, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new CatalogValidationException(
+                        $"Products in familyId '{family.Key}' must declare compatible product types.");
+                }
+
+                if (!product.Display.Title.Equals(
+                        firstProduct.Display.Title,
+                        StringComparison.Ordinal))
+                {
+                    throw new CatalogValidationException(
+                        $"Products in familyId '{family.Key}' must declare the same display title.");
+                }
             }
 
             var exclusiveGroups = family
                 .Select(product => product.ExclusiveGroup!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.Ordinal)
                 .ToArray();
             if (exclusiveGroups.Length != 1)
             {
@@ -577,6 +592,16 @@ public sealed class CatalogService
                      product => product.ExclusiveGroup!,
                      StringComparer.OrdinalIgnoreCase))
         {
+            if (installationSlot
+                    .Select(product => product.ExclusiveGroup!)
+                    .Distinct(StringComparer.Ordinal)
+                    .Skip(1)
+                    .Any())
+            {
+                throw new CatalogValidationException(
+                    $"Products sharing exclusiveGroup '{installationSlot.Key}' must use identical casing.");
+            }
+
             string? expectedSteamAppId = null;
             string? expectedStrategy = null;
 

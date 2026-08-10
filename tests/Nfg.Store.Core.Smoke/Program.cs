@@ -48,6 +48,8 @@ try
     await CheckCatalogSourcesAsync();
     await CheckRichCatalogValidationAsync();
     await CheckProductSchemaV2ValidationAsync();
+    await InstallationStateV2Smoke.RunAsync(testRoot);
+    CheckInstallationCatalogRequirementUnion();
     await CheckProductLibraryStoreAsync();
     await CheckPackageDownloadAndValidationAsync();
     await CheckManagedUpdateAsync();
@@ -61,6 +63,49 @@ finally
     {
         Directory.Delete(testRoot, recursive: true);
     }
+}
+
+void CheckInstallationCatalogRequirementUnion()
+{
+    var prototype = new InstalledProductState
+    {
+        SchemaVersion = 2,
+        InstallationKey = "nfg.anvil-empires.ru",
+        ProductId = "nfg.anvil-empires.es",
+        Version = "1.0.0",
+        PackageSizeBytes = 1,
+        PackageSha256 = new string('a', 64),
+        SteamAppId = "2383950",
+        SteamBuildId = "24619810",
+        GameRoot = Path.Combine(testRoot, "required-products-game"),
+        InstalledAt = DateTimeOffset.UnixEpoch,
+        Files =
+        [
+            new InstalledFileState
+            {
+                Destination = "Anvil/Content/Paks/test.pak",
+                SizeBytes = 1,
+                Sha256 = new string('b', 64)
+            }
+        ]
+    };
+    var required = InstallationCatalogRequirements.UnionProductIds(
+        ["nfg.anvil-empires.ru"],
+        [
+            prototype,
+            prototype with
+            {
+                InstallationKey = "nfg.anvil-empires.forge-helper",
+                ProductId = "nfg.anvil-empires.forge-helper"
+            }
+        ]);
+
+    Assert(
+        required.Count == 3 &&
+        required.Contains("nfg.anvil-empires.ru") &&
+        required.Contains("nfg.anvil-empires.es") &&
+        required.Contains("nfg.anvil-empires.forge-helper"),
+        "Startup catalog requirements did not union library and installed product ids.");
 }
 
 async Task CheckSemanticVersionContractAsync()
@@ -939,6 +984,34 @@ async Task CheckProductSchemaV2ValidationAsync()
                 exclusiveGroup: "nfg.test.other-game-language")
         ],
         "All variants in one family must share one exclusive group.");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-exclusive-group-case-alias",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.es",
+                "es",
+                exclusiveGroup: "NFG.TEST.GAME-LANGUAGE")
+        ],
+        "Installation slot ids must use stable, identical casing.");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-types",
+        [
+            russian,
+            CreateVariantProduct("nfg.test.localization.es", "es") with { Type = "mod" }
+        ],
+        "All variants in one family must use compatible product types.");
+    var mismatchedTitle = CreateVariantProduct("nfg.test.localization.es", "es");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-titles",
+        [
+            russian,
+            mismatchedTitle with
+            {
+                Display = mismatchedTitle.Display with { Title = "Different title" }
+            }
+        ],
+        "All variants in one family must use the same display title.");
 
     await AssertCatalogSetRejectedAsync(
         "exclusive-group-different-steam-app",
@@ -1224,7 +1297,7 @@ async Task CheckManagedInstallationAsync(ValidatedPackage package, ProductManife
         statePath,
         JsonSerializer.Serialize(new
         {
-            schemaVersion = installed.State.SchemaVersion,
+            schemaVersion = 1,
             productId = installed.State.ProductId,
             version = installed.State.Version,
             packageSizeBytes = installed.State.PackageSizeBytes,
@@ -1244,6 +1317,8 @@ async Task CheckManagedInstallationAsync(ValidatedPackage package, ProductManife
     Assert(
         migratedLegacyState?.IsEnabled == true,
         "Legacy installation state should default to enabled.");
+    await new InstallationStateMigrator(stateStore).MigrateAsync(
+        new StoreCatalog("nfg.test", "Test", [product]));
 
     var repeated = await installer.InstallAsync(package, product, gameRoot);
     Assert(repeated.Outcome == ManagedInstallOutcome.AlreadyInstalled, "Expected idempotent install.");
@@ -1973,6 +2048,10 @@ file sealed class FailingVersionStateStore(
         string productId,
         CancellationToken cancellationToken = default) =>
         inner.LoadAsync(productId, cancellationToken);
+
+    public Task<IReadOnlyList<InstalledProductState>> LoadAllAsync(
+        CancellationToken cancellationToken = default) =>
+        inner.LoadAllAsync(cancellationToken);
 
     public Task SaveAsync(
         InstalledProductState state,

@@ -1,8 +1,17 @@
+using System.Text.Json.Serialization;
+
 namespace Nfg.Store.Installation;
 
 public sealed record InstalledProductState
 {
     public required int SchemaVersion { get; init; }
+
+    /// <summary>
+    /// Stable identity of the installation slot. Schema-v1 state omits this
+    /// property and is accepted only for recovery and migration.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? InstallationKey { get; init; }
 
     public required string ProductId { get; init; }
 

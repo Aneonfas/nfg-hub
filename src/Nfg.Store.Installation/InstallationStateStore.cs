@@ -1,13 +1,16 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Nfg.Store.Core;
 
 namespace Nfg.Store.Installation;
 
 public sealed class InstallationStateStore : IInstallationStateStore
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
+        AllowDuplicateProperties = false,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         WriteIndented = true
     };
 
@@ -21,91 +24,120 @@ public sealed class InstallationStateStore : IInstallationStateStore
 
     public string DataRoot { get; }
 
+    internal string StateRoot => _stateRoot;
+
     public async Task<InstalledProductState?> LoadAsync(
-        string productId,
+        string installationKey,
         CancellationToken cancellationToken = default)
     {
-        var path = GetStatePath(productId);
+        var path = GetStatePath(installationKey);
         if (!File.Exists(path))
         {
             return null;
         }
 
-        try
-        {
-            await using var stream = File.OpenRead(path);
-            var state = await JsonSerializer.DeserializeAsync<InstalledProductState>(
-                stream,
-                SerializerOptions,
-                cancellationToken);
-            ValidateState(state, productId);
-            return state;
-        }
-        catch (JsonException exception)
-        {
-            throw new InstallationStateException(
-                $"Installation state for '{productId}' contains invalid JSON.",
-                exception);
-        }
+        return (await ReadSnapshotAsync(path, installationKey, cancellationToken)).State;
     }
+
+    public async Task<IReadOnlyList<InstalledProductState>> LoadAllAsync(
+        CancellationToken cancellationToken = default) =>
+        (await ReadSnapshotsAsync(cancellationToken))
+        .Select(snapshot => snapshot.State)
+        .ToArray();
 
     public async Task SaveAsync(
         InstalledProductState state,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(state);
-        ValidateState(state, state.ProductId);
+        if (state.SchemaVersion != 2 || state.InstallationKey is null)
+        {
+            throw new InstallationStateException(
+                "Only schema-v2 installation state can be committed.");
+        }
 
-        var path = GetStatePath(state.ProductId);
+        ValidateState(state, state.InstallationKey);
         Directory.CreateDirectory(_stateRoot);
-        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
-
-        try
-        {
-            await using (var stream = new FileStream(
-                             temporaryPath,
-                             FileMode.CreateNew,
-                             FileAccess.Write,
-                             FileShare.None,
-                             bufferSize: 16384,
-                             FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                await JsonSerializer.SerializeAsync(
-                    stream,
-                    state,
-                    SerializerOptions,
-                    cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-
-            File.Move(temporaryPath, path, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-        }
+        await WriteAtomicAsync(GetStatePath(state.InstallationKey), state, cancellationToken);
     }
 
-    public void Delete(string productId)
+    internal async Task SaveNewAsync(
+        InstalledProductState state,
+        CancellationToken cancellationToken = default)
     {
-        var path = GetStatePath(productId);
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.SchemaVersion != 2 || state.InstallationKey is null)
+        {
+            throw new InstallationStateException(
+                "Only schema-v2 installation state can be committed.");
+        }
+
+        ValidateState(state, state.InstallationKey);
+        Directory.CreateDirectory(_stateRoot);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(state, SerializerOptions);
+        await WriteBytesAtomicAsync(
+            GetStatePath(state.InstallationKey),
+            bytes,
+            overwrite: false,
+            cancellationToken);
+    }
+
+    public void Delete(string installationKey)
+    {
+        var path = GetStatePath(installationKey);
         if (File.Exists(path))
         {
             File.Delete(path);
         }
     }
 
-    private string GetStatePath(string productId) =>
-        Path.Combine(_stateRoot, $"{SanitizeProductId(productId)}.json");
-
-    internal static void ValidateState(InstalledProductState? state, string expectedProductId)
+    internal async Task<IReadOnlyList<InstallationStateSnapshot>> ReadSnapshotsAsync(
+        CancellationToken cancellationToken = default)
     {
-        if (state is null ||
-            state.SchemaVersion != 1 ||
-            !string.Equals(state.ProductId, expectedProductId, StringComparison.Ordinal) ||
+        if (!Directory.Exists(_stateRoot))
+        {
+            return [];
+        }
+
+        var snapshots = new List<InstallationStateSnapshot>();
+        foreach (var path in Directory
+                     .EnumerateFiles(_stateRoot, "*.json", SearchOption.TopDirectoryOnly)
+                     .Order(StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var fileName = Path.GetFileNameWithoutExtension(path);
+            SanitizeInstallationKey(fileName);
+            snapshots.Add(await ReadSnapshotAsync(path, fileName, cancellationToken));
+        }
+
+        return snapshots;
+    }
+
+    internal string GetStatePath(string installationKey) =>
+        Path.Combine(_stateRoot, $"{SanitizeInstallationKey(installationKey)}.json");
+
+    internal static void ValidateState(
+        InstalledProductState? state,
+        string expectedInstallationKey)
+    {
+        SanitizeInstallationKey(expectedInstallationKey);
+        var hasValidIdentity = state?.SchemaVersion switch
+        {
+            1 => state.InstallationKey is null &&
+                 string.Equals(
+                     state.ProductId,
+                     expectedInstallationKey,
+                     StringComparison.Ordinal),
+            2 => string.Equals(
+                     state.InstallationKey,
+                     expectedInstallationKey,
+                     StringComparison.Ordinal) &&
+                 IsSafeIdentifier(state.ProductId),
+            _ => false
+        };
+
+        if (!hasValidIdentity ||
+            state is null ||
             !SemanticVersionComparer.IsValid(state.Version) ||
             state.PackageSizeBytes <= 0 ||
             !IsSha256(state.PackageSha256) ||
@@ -123,7 +155,7 @@ public sealed class InstallationStateStore : IInstallationStateStore
                 !IsSha256(file.Sha256)))
         {
             throw new InstallationStateException(
-                $"Installation state for '{expectedProductId}' is invalid.");
+                $"Installation state for '{expectedInstallationKey}' is invalid.");
         }
 
         if (state.Files
@@ -132,23 +164,107 @@ public sealed class InstallationStateStore : IInstallationStateStore
                 .Count() != state.Files.Count)
         {
             throw new InstallationStateException(
-                $"Installation state for '{expectedProductId}' contains duplicate destinations.");
+                $"Installation state for '{expectedInstallationKey}' contains duplicate destinations.");
         }
     }
 
-    internal static string SanitizeProductId(string productId)
+    internal static string SanitizeInstallationKey(string installationKey)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(productId);
-        if (!productId.All(character =>
-                char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_'))
+        ArgumentException.ThrowIfNullOrWhiteSpace(installationKey);
+        if (!IsSafeIdentifier(installationKey))
         {
             throw new InstallationStateException(
-                $"Product id '{productId}' cannot be used for installation state.");
+                $"Installation key '{installationKey}' cannot be used for installation state.");
         }
 
-        return productId;
+        return installationKey;
     }
+
+    internal static string SanitizeProductId(string productId) =>
+        SanitizeInstallationKey(productId);
+
+    internal static async Task WriteBytesAtomicAsync(
+        string path,
+        ReadOnlyMemory<byte> bytes,
+        bool overwrite,
+        CancellationToken cancellationToken)
+    {
+        var parent = Path.GetDirectoryName(path)
+            ?? throw new InstallationStateException("Installation state path has no parent directory.");
+        Directory.CreateDirectory(parent);
+        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            await using (var stream = new FileStream(
+                             temporaryPath,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: 16384,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(bytes, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            File.Move(temporaryPath, path, overwrite);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static bool IsSafeIdentifier(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_');
 
     private static bool IsSha256(string? value) =>
         value is { Length: 64 } && value.All(Uri.IsHexDigit);
+
+    private static async Task WriteAtomicAsync(
+        string path,
+        InstalledProductState state,
+        CancellationToken cancellationToken)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(state, SerializerOptions);
+        await WriteBytesAtomicAsync(path, bytes, overwrite: true, cancellationToken);
+    }
+
+    private static async Task<InstallationStateSnapshot> ReadSnapshotAsync(
+        string path,
+        string expectedInstallationKey,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+            var state = JsonSerializer.Deserialize<InstalledProductState>(
+                bytes,
+                SerializerOptions);
+            ValidateState(state, expectedInstallationKey);
+            return new InstallationStateSnapshot(
+                Path.GetFullPath(path),
+                expectedInstallationKey,
+                bytes,
+                state!);
+        }
+        catch (JsonException exception)
+        {
+            throw new InstallationStateException(
+                $"Installation state for '{expectedInstallationKey}' contains invalid JSON.",
+                exception);
+        }
+    }
 }
+
+internal sealed record InstallationStateSnapshot(
+    string Path,
+    string FileKey,
+    byte[] Bytes,
+    InstalledProductState State);

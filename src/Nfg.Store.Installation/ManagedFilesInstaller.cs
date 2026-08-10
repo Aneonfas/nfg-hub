@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Nfg.Store.Contracts;
@@ -10,12 +9,8 @@ namespace Nfg.Store.Installation;
 public sealed class ManagedFilesInstaller(IInstallationStateStore stateStore)
 {
     private const string DisabledFileSuffix = ".nfg-disabled";
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> OperationLocks =
-        new(StringComparer.OrdinalIgnoreCase);
-
     private readonly ManagedUpdateJournalStore _updateJournalStore = new(stateStore);
-    private readonly string _operationLockRoot = Path.GetFullPath(
-        Path.Combine(stateStore.DataRoot, "state", "locks"));
+    private readonly InstallationOperationLock _operationLock = new(stateStore.DataRoot);
 
     public async Task<ManagedInstallResult> InstallAsync(
         ValidatedPackage package,
@@ -937,6 +932,10 @@ public sealed class ManagedFilesInstaller(IInstallationStateStore stateStore)
     {
         if (left is null ||
             left.SchemaVersion != right.SchemaVersion ||
+            !string.Equals(
+                left.InstallationKey,
+                right.InstallationKey,
+                StringComparison.Ordinal) ||
             !left.ProductId.Equals(right.ProductId, StringComparison.Ordinal) ||
             !left.Version.Equals(right.Version, StringComparison.Ordinal) ||
             left.PackageSizeBytes != right.PackageSizeBytes ||
@@ -1042,58 +1041,10 @@ public sealed class ManagedFilesInstaller(IInstallationStateStore stateStore)
         CancellationToken cancellationToken,
         Func<Task<T>> operation)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(productId);
-        var key = $"{Path.GetFullPath(stateStore.DataRoot)}|{productId}";
-        var gate = OperationLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        try
-        {
-            await using var interprocessLock = await AcquireInterprocessLockAsync(
-                productId,
-                cancellationToken);
-            return await operation();
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    private async Task<FileStream> AcquireInterprocessLockAsync(
-        string productId,
-        CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(_operationLockRoot);
-        var lockPath = Path.Combine(
-            _operationLockRoot,
-            $"{InstallationStateStore.SanitizeProductId(productId)}.lock");
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                return new FileStream(
-                    lockPath,
-                    FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite,
-                    FileShare.None,
-                    bufferSize: 4096,
-                    FileOptions.Asynchronous);
-            }
-            catch (IOException exception) when (IsSharingOrLockViolation(exception))
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
-            }
-        }
-    }
-
-    private static bool IsSharingOrLockViolation(IOException exception)
-    {
-        const int SharingViolation = 32;
-        const int LockViolation = 33;
-        var errorCode = exception.HResult & 0xFFFF;
-        return errorCode is SharingViolation or LockViolation;
+        return await _operationLock.ExecuteAsync(
+            productId,
+            cancellationToken,
+            operation);
     }
 
     private static void ValidatePackageIdentity(ValidatedPackage package, ProductManifest product)
@@ -1161,7 +1112,8 @@ public sealed class ManagedFilesInstaller(IInstallationStateStore stateStore)
         bool isEnabled = true,
         string? detectedSteamBuildId = null) => new()
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
+            InstallationKey = ProductInstallationKey.FromManifest(product),
             ProductId = product.Id,
             Version = product.Release.Version,
             PackageSizeBytes = payload.SizeBytes,

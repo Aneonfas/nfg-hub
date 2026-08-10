@@ -5,12 +5,15 @@ public interface IInstallationStateStore
     string DataRoot { get; }
 
     Task<InstalledProductState?> LoadAsync(
-        string productId,
+        string installationKey,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<InstalledProductState>> LoadAllAsync(
         CancellationToken cancellationToken = default);
 
     Task SaveAsync(
         InstalledProductState state,
         CancellationToken cancellationToken = default);
 
-    void Delete(string productId);
+    void Delete(string installationKey);
 }

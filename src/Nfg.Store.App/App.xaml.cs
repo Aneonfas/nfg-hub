@@ -75,28 +75,34 @@ public partial class App : Application
             var libraryProductIds = new HashSet<string>(
                 await libraryStore.LoadAsync(),
                 StringComparer.Ordinal);
+            var discoveredStates = await stateStore.LoadAllAsync();
+            var requiredProductIds = InstallationCatalogRequirements.UnionProductIds(
+                libraryProductIds,
+                discoveredStates);
             var catalogService = new CatalogService(_httpClient);
             var catalogResult = settings.CheckUpdatesAutomatically && !isStartupSmoke
                 ? await catalogService.LoadRemoteFirstAsync(
                     CatalogUri,
                     cacheRoot,
                     bundledCatalogRoot,
-                    requiredProductIds: libraryProductIds)
+                    requiredProductIds: requiredProductIds)
                 : await catalogService.LoadLocalFirstAsync(
                     CatalogUri,
                     cacheRoot,
                     bundledCatalogRoot,
-                    requiredProductIds: libraryProductIds);
-            var installedStates = new Dictionary<string, InstalledProductState?>(
+                    requiredProductIds: requiredProductIds);
+            var migratedStates = await new InstallationStateMigrator(stateStore)
+                .MigrateAsync(catalogResult.Catalog);
+            var installedStates = migratedStates.ToDictionary(
+                state => state.InstallationKey!,
+                state => (InstalledProductState?)state,
                 StringComparer.Ordinal);
 
-            foreach (var product in catalogResult.Catalog.Products)
+            foreach (var installedState in migratedStates)
             {
-                var installedState = await stateStore.LoadAsync(product.Id);
-                installedStates[product.Id] = installedState;
-                if (installedState is not null && libraryProductIds.Add(product.Id))
+                if (libraryProductIds.Add(installedState.ProductId))
                 {
-                    await libraryStore.AddAsync(product.Id);
+                    await libraryStore.AddAsync(installedState.ProductId);
                 }
             }
 
