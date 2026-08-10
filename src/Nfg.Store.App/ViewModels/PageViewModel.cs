@@ -2,7 +2,7 @@ using Nfg.Store.App.Infrastructure;
 
 namespace Nfg.Store.App.ViewModels;
 
-public abstract class PageViewModel(string title) : ObservableObject
+public abstract class PageViewModel(string title, bool localizeTitle = false) : LocalizedObservableObject
 {
-    public string Title { get; } = title;
+    public virtual string Title => localizeTitle ? Text.Get(title) : title;
 }

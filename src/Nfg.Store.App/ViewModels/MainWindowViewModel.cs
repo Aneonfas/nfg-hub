@@ -63,14 +63,14 @@ public sealed class MainWindowViewModel : ObservableObject
             settings,
             settingsStore);
 
-        _catalogNavigation = new NavigationItemViewModel("Каталог", "▦", catalogPage);
-        _libraryNavigation = new NavigationItemViewModel("Библиотека", "▤", libraryPage);
+        _catalogNavigation = new NavigationItemViewModel("Nav.Catalog", "▦", catalogPage);
+        _libraryNavigation = new NavigationItemViewModel("Nav.Library", "▤", libraryPage);
 
         Navigation =
         [
             _catalogNavigation,
             _libraryNavigation,
-            new NavigationItemViewModel("Настройки", "⚙", settingsPage)
+            new NavigationItemViewModel("Nav.Settings", "⚙", settingsPage)
         ];
 
         _currentPage = catalogPage;

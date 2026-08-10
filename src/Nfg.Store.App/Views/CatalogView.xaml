@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:loc="clr-namespace:Nfg.Store.App.Localization"
              mc:Ignorable="d"
              d:DesignHeight="820"
              d:DesignWidth="1200">
@@ -120,7 +121,7 @@
             </Grid.RowDefinitions>
 
             <StackPanel>
-                <TextBlock Text="Каталог"
+                <TextBlock Text="{loc:Loc Nav.Catalog}"
                            Style="{StaticResource PageTitleStyle}" />
             </StackPanel>
 
@@ -155,7 +156,7 @@
                                         BorderBrush="#3D482B"
                                         BorderThickness="1"
                                         CornerRadius="5">
-                                    <TextBlock Text="{Binding Product.TypeLabel, FallbackValue=ПРОДУКТ, TargetNullValue=ПРОДУКТ}"
+                                    <TextBlock Text="{Binding Product.TypeLabel}"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource AccentBrush}" />
@@ -234,7 +235,7 @@
                                              Style="{StaticResource CatalogStatusDotStyle}" />
                                     <TextBlock Grid.Column="1"
                                                VerticalAlignment="Center"
-                                               Text="{Binding CatalogStatusText, FallbackValue=Доступно}"
+                                               Text="{Binding CatalogStatusText}"
                                                TextTrimming="CharacterEllipsis"
                                                Style="{StaticResource CatalogStatusTextStyle}" />
                                     <TextBlock Grid.Column="2"
@@ -275,11 +276,11 @@
                     </Border>
                     <TextBlock Margin="0,20,0,0"
                                HorizontalAlignment="Center"
-                               Text="Каталог пока пуст"
+                               Text="{loc:Loc Catalog.Empty}"
                                FontSize="22"
                                FontWeight="SemiBold" />
                     <TextBlock Margin="0,9,0,0"
-                               Text="Продукты появятся здесь после обновления каталога."
+                               Text="{loc:Loc Catalog.Empty.Description}"
                                TextAlignment="Center"
                                TextWrapping="Wrap"
                                FontSize="14"

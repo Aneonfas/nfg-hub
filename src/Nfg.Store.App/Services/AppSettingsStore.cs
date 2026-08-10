@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Nfg.Store.App.Localization;
 
 namespace Nfg.Store.App.Services;
 
@@ -11,6 +12,8 @@ public sealed record AppSettings
 
     [JsonRequired]
     public bool CheckUpdatesAutomatically { get; init; } = true;
+
+    public string? UiLanguage { get; init; }
 }
 
 public sealed class AppSettingsStore
@@ -47,23 +50,21 @@ public sealed class AppSettingsStore
         {
             using var stream = File.OpenRead(_settingsPath);
             var settings = JsonSerializer.Deserialize<AppSettings>(stream, SerializerOptions);
-            return settings is { SchemaVersion: 1 }
-                ? settings
-                : throw new InvalidDataException("NFG Hub settings have an unsupported schema.");
+            Validate(settings);
+            return settings!;
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException("NFG Hub settings contain invalid JSON.", exception);
+            throw new InvalidDataException(
+                LocalizationService.Instance.Get("Settings.InvalidJson"),
+                exception);
         }
     }
 
     public void Save(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        if (settings.SchemaVersion != 1)
-        {
-            throw new InvalidDataException("NFG Hub settings have an unsupported schema.");
-        }
+        Validate(settings);
 
         var directory = Path.GetDirectoryName(_settingsPath)!;
         Directory.CreateDirectory(directory);
@@ -90,6 +91,22 @@ public sealed class AppSettingsStore
             {
                 File.Delete(temporaryPath);
             }
+        }
+    }
+
+    private static void Validate(AppSettings? settings)
+    {
+        if (settings is not { SchemaVersion: 1 })
+        {
+            throw new InvalidDataException(
+                LocalizationService.Instance.Get("Settings.UnsupportedSchema"));
+        }
+
+        if (settings.UiLanguage is not null &&
+            !LocalizationService.IsSupported(settings.UiLanguage))
+        {
+            throw new InvalidDataException(
+                LocalizationService.Instance.Get("Settings.UnsupportedLanguage"));
         }
     }
 }

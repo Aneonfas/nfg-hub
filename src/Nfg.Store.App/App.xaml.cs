@@ -1,7 +1,9 @@
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Globalization;
 using System.Windows;
+using Nfg.Store.App.Localization;
 using Nfg.Store.App.Services;
 using Nfg.Store.App.ViewModels;
 using Nfg.Store.Core;
@@ -33,6 +35,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var isStartupSmoke = e.Args.Contains("--startup-smoke", StringComparer.Ordinal);
+        var localization = LocalizationService.Instance;
+        localization.SetLanguage(LocalizationService.DetectLanguage(CultureInfo.CurrentUICulture));
 
         try
         {
@@ -59,15 +63,15 @@ public partial class App : Application
             try
             {
                 settings = settingsStore.Load();
+                localization.SetLanguage(settings.UiLanguage ?? localization.CurrentLanguage);
             }
             catch (InvalidDataException exception)
             {
                 settings = new AppSettings();
-                var settingsWarning =
-                    $"Файл настроек повреждён или имеет неподдерживаемую версию. " +
-                    $"В этом запуске используются настройки по умолчанию.\n\n" +
-                    $"{exception.Message}\n\n" +
-                    $"Исходный файл сохранён без изменений:\n{settingsStore.SettingsPath}";
+                var settingsWarning = localization.Format(
+                    "Startup.SettingsWarning",
+                    exception.Message,
+                    settingsStore.SettingsPath);
                 startupWarning = settingsWarning;
             }
 
@@ -131,7 +135,7 @@ public partial class App : Application
                 MessageBox.Show(
                     window,
                     startupWarning,
-                    "Предупреждение NFG Hub",
+                    localization.Get("Startup.WarningTitle"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
@@ -149,8 +153,8 @@ public partial class App : Application
                 return;
             }
             MessageBox.Show(
-                $"NFG Hub не смог запуститься.\n\n{details}",
-                "Ошибка запуска",
+                localization.Format("Startup.Error", details),
+                localization.Get("Startup.ErrorTitle"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(1);

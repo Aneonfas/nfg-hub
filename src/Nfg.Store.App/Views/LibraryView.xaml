@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:loc="clr-namespace:Nfg.Store.App.Localization"
              mc:Ignorable="d"
              d:DesignHeight="820"
              d:DesignWidth="1200">
@@ -13,7 +14,7 @@
                       Visibility="{Binding HasProducts, Converter={StaticResource BooleanToVisibilityConverter}}">
             <StackPanel Margin="44,34,44,48"
                         HorizontalAlignment="Stretch">
-                <TextBlock Text="Библиотека"
+                <TextBlock Text="{loc:Loc Nav.Library}"
                            Style="{StaticResource PageTitleStyle}" />
 
                 <ItemsControl Margin="0,30,0,0"
@@ -40,7 +41,7 @@
                                                     BorderBrush="#3A432F"
                                                     BorderThickness="1"
                                                     CornerRadius="6">
-                                                <TextBlock Text="В БИБЛИОТЕКЕ"
+                                                <TextBlock Text="{loc:Loc Library.InLibrary}"
                                                            FontSize="10"
                                                            FontWeight="Bold"
                                                            Foreground="{StaticResource AccentBrush}" />
@@ -91,24 +92,26 @@
                                                     Orientation="Horizontal">
                                             <Button MinWidth="148"
                                                     Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="Описание продукта"
+                                                    Content="{loc:Loc Library.ProductDetails}"
                                                     Command="{Binding DataContext.OpenProductCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                     CommandParameter="{Binding}" />
                                             <StackPanel Margin="18,0,0,0"
                                                         VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal"
                                                             Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                    <TextBlock Text="Установлено: "
+                                                    <TextBlock Text="{loc:Loc Library.InstalledLabel}"
                                                                Foreground="{StaticResource TextSecondaryBrush}" />
-                                                    <TextBlock Text="{Binding InstalledSelectionText}"
+                                                    <TextBlock Margin="4,0,0,0"
+                                                               Text="{Binding InstalledSelectionText}"
                                                                FontFamily="Cascadia Mono, Consolas"
                                                                Foreground="#D7DCE2" />
                                                 </StackPanel>
                                                 <StackPanel Margin="0,3,0,0"
                                                             Orientation="Horizontal">
-                                                    <TextBlock Text="Выбрано: "
+                                                    <TextBlock Text="{loc:Loc Library.SelectedLabel}"
                                                                Foreground="{StaticResource TextSecondaryBrush}" />
-                                                    <TextBlock Text="{Binding SelectedSelectionText}"
+                                                    <TextBlock Margin="4,0,0,0"
+                                                               Text="{Binding SelectedSelectionText}"
                                                                FontFamily="Cascadia Mono, Consolas"
                                                                Foreground="#D7DCE2" />
                                                 </StackPanel>
@@ -170,28 +173,28 @@
                                         <StackPanel Margin="0,0,0,12"
                                                     Visibility="{Binding HasMultipleVariants, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Margin="1,0,0,7"
-                                                       Text="ЯЗЫК ДЛЯ УСТАНОВКИ"
+                                                       Text="{loc:Loc Common.LanguageForInstall}"
                                                        FontSize="10"
                                                        FontWeight="Bold"
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
                                             <ComboBox ItemsSource="{Binding AvailableVariants}"
                                                       SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
                                                       IsEnabled="{Binding CanSelectVariant}"
-                                                      AutomationProperties.Name="Выбор языка продукта"
+                                                      AutomationProperties.Name="{loc:Loc Common.LanguageSelection}"
                                                       Style="{StaticResource VariantComboBoxStyle}" />
                                         </StackPanel>
 
                                         <StackPanel Margin="0,0,0,20"
                                                     Visibility="{Binding HasMultipleVersions, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Margin="1,0,0,7"
-                                                       Text="ВЕРСИЯ ДЛЯ УСТАНОВКИ"
+                                                       Text="{loc:Loc Common.VersionForInstall}"
                                                        FontSize="10"
                                                        FontWeight="Bold"
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
                                             <ComboBox ItemsSource="{Binding AvailableVersions}"
                                                       SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
                                                       IsEnabled="{Binding CanSelectVersion}"
-                                                      AutomationProperties.Name="Выбор версии продукта"
+                                                      AutomationProperties.Name="{loc:Loc Common.VersionSelection}"
                                                       Style="{StaticResource VersionComboBoxStyle}" />
                                         </StackPanel>
 
@@ -203,7 +206,7 @@
                                                 IsEnabled="{Binding CanApply}" />
 
                                         <StackPanel Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="УСТАНОВЛЕН НА УСТРОЙСТВЕ"
+                                            <TextBlock Text="{loc:Loc Library.InstalledOnDevice}"
                                                        FontSize="10"
                                                        FontWeight="Bold"
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
@@ -233,7 +236,7 @@
                                             <Button Margin="0,18,0,0"
                                                     HorizontalAlignment="Stretch"
                                                     Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="Удалить с устройства"
+                                                    Content="{loc:Loc Library.RemoveDevice}"
                                                      Command="{Binding RemoveFromDeviceCommand}"
                                                      IsEnabled="{Binding CanRemoveFromDevice}" />
                                         </StackPanel>
@@ -244,7 +247,7 @@
 
                                         <Button HorizontalAlignment="Stretch"
                                                 Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="Удалить из библиотеки"
+                                                Content="{loc:Loc Library.RemoveLibrary}"
                                                 Command="{Binding RemoveFromLibraryCommand}"
                                                 IsEnabled="{Binding CanRemoveFromLibrary}" />
                                     </StackPanel>
@@ -274,11 +277,11 @@
                            Foreground="{StaticResource AccentBrush}" />
             </Border>
             <TextBlock Margin="0,22,0,0"
-                       Text="Библиотека пока пуста"
+                       Text="{loc:Loc Library.Empty}"
                        HorizontalAlignment="Center"
                        Style="{StaticResource PageTitleStyle}" />
             <TextBlock Margin="0,10,0,0"
-                       Text="Выберите продукт в каталоге и нажмите «Установить» — он появится здесь сразу после начала операции."
+                       Text="{loc:Loc Library.Empty.Description}"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
                        FontSize="15"

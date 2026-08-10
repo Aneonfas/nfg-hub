@@ -1,15 +1,19 @@
 using System.IO.Compression;
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nfg.Store.App.Services;
+using Nfg.Store.App.Localization;
 using Nfg.Store.App.ViewModels;
 using Nfg.Store.Contracts;
 using Nfg.Store.Core;
 using Nfg.Store.Installation;
 using Nfg.Store.Platform.Windows;
+
+LocalizationService.Instance.SetLanguage("ru");
 
 if (args.Length > 0)
 {
@@ -102,6 +106,7 @@ try
 {
     Directory.CreateDirectory(testRoot);
     await CheckSemanticVersionContractAsync();
+    CheckLocalization();
     CheckMultiReleaseSelection();
     CheckRefreshGameCompatibility();
     CheckDetectionWithoutSingleSteamAppId();
@@ -575,25 +580,81 @@ void CheckProductUpdatePresentation()
         "Manual selection should retain release-specific compatibility information.");
 }
 
+void CheckLocalization()
+{
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("ru-RU")) == "ru",
+        "Russian system culture was not detected.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("es-MX")) == "es",
+        "Spanish regional culture was not detected.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("de-DE")) == "en",
+        "Unsupported system culture should fall back to English.");
+
+    var product = new ProductViewModel(CreateProduct(1, new string('a', 64)));
+    var languageRefreshes = 0;
+    product.PropertyChanged += (_, eventArgs) =>
+    {
+        if (string.IsNullOrEmpty(eventArgs.PropertyName))
+        {
+            languageRefreshes++;
+        }
+    };
+
+    LocalizationService.Instance.SetLanguage("en");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Catalog",
+        "English UI resources were not selected.");
+    Assert(product.TypeLabel == "Localization",
+        "An existing view model did not expose English text.");
+    LocalizationService.Instance.SetLanguage("es");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Catálogo",
+        "Spanish UI resources were not selected.");
+    Assert(product.TypeLabel == "Localización",
+        "An existing view model did not refresh to Spanish.");
+    LocalizationService.Instance.SetLanguage("ru");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Каталог",
+        "Russian UI resources were not selected.");
+    Assert(product.TypeLabel == "Локализация" && languageRefreshes == 3,
+        "Live UI language changes were not broadcast to existing view models.");
+}
+
 void CheckAppSettingsPersistence()
 {
     var settingsRoot = Path.Combine(testRoot, "app-settings");
     var store = new AppSettingsStore(settingsRoot);
+    var defaultSettings = store.Load();
     Assert(
-        store.Load().CheckUpdatesAutomatically,
+        defaultSettings.CheckUpdatesAutomatically,
         "Automatic catalog checks should default to enabled.");
+    Assert(defaultSettings.UiLanguage is null,
+        "A clean install should defer to the system UI language.");
 
-    store.Save(new AppSettings { CheckUpdatesAutomatically = false });
+    store.Save(new AppSettings
+    {
+        CheckUpdatesAutomatically = false,
+        UiLanguage = "es"
+    });
+    var persistedSettings = new AppSettingsStore(settingsRoot).Load();
     Assert(
-        !new AppSettingsStore(settingsRoot).Load().CheckUpdatesAutomatically,
+        !persistedSettings.CheckUpdatesAutomatically,
         "The automatic catalog check setting was not persisted.");
+    Assert(persistedSettings.UiLanguage == "es",
+        "The selected UI language was not persisted.");
+
+    var legacyRoot = Path.Combine(testRoot, "app-settings-legacy");
+    var legacyStore = new AppSettingsStore(legacyRoot);
+    Directory.CreateDirectory(Path.GetDirectoryName(legacyStore.SettingsPath)!);
+    File.WriteAllText(
+        legacyStore.SettingsPath,
+        """{ "schemaVersion": 1, "checkUpdatesAutomatically": true }""");
+    Assert(legacyStore.Load().UiLanguage is null,
+        "Settings written before UI localization should remain loadable.");
 
     foreach (var (caseName, invalidJson) in new[]
              {
                  ("malformed", "{"),
                  ("unsupported-schema", """{ "schemaVersion": 2, "checkUpdatesAutomatically": true }"""),
                  ("missing-schema", """{ "checkUpdatesAutomatically": true }"""),
-                 ("missing-setting", """{ "schemaVersion": 1 }""")
+                 ("missing-setting", """{ "schemaVersion": 1 }"""),
+                 ("unsupported-language", """{ "schemaVersion": 1, "checkUpdatesAutomatically": true, "uiLanguage": "fr" }""")
              })
     {
         var invalidRoot = Path.Combine(testRoot, "app-settings-invalid", caseName);

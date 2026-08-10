@@ -1,8 +1,9 @@
 using Nfg.Store.Contracts;
+using Nfg.Store.App.Infrastructure;
 
 namespace Nfg.Store.App.ViewModels;
 
-public sealed class ProductViewModel
+public sealed class ProductViewModel : LocalizedObservableObject
 {
     private readonly ProductManifest _manifest;
 
@@ -19,10 +20,10 @@ public sealed class ProductViewModel
 
     public string TypeLabel => _manifest.Type switch
     {
-        "localization" => "Локализация",
-        "mod" => "Модификация",
-        "tool" => "Инструмент",
-        _ => "Продукт"
+        "localization" => Text.Get("Product.Type.Localization"),
+        "mod" => Text.Get("Product.Type.Mod"),
+        "tool" => Text.Get("Product.Type.Tool"),
+        _ => Text.Get("Product.Type.Product")
     };
 
     public string Summary => _manifest.Display.Summary;
@@ -33,7 +34,7 @@ public sealed class ProductViewModel
 
     public string VersionLabel => _manifest.Release.Version;
 
-    public string ReleaseChangesTitle => $"Что нового в {VersionLabel}";
+    public string ReleaseChangesTitle => Text.Format("Product.WhatsNew", VersionLabel);
 
     public IReadOnlyList<string> ReleaseHighlights => _manifest.Release.Highlights;
 
@@ -66,9 +67,9 @@ public sealed class ProductViewModel
 
     public string CompatibilityLabel => _manifest.Compatibility.Status switch
     {
-        "compatible" => "Совместимо",
-        "incompatible" => "Не совместимо",
-        _ => "Требует проверки"
+        "compatible" => Text.Get("Product.Compatible"),
+        "incompatible" => Text.Get("Product.Incompatible"),
+        _ => Text.Get("Product.NeedsReview")
     };
 
     public string ProgressLabel => _manifest.Progress.TranslationPercent is { } percent
@@ -87,6 +88,6 @@ public sealed class ProductViewModel
         _manifest.Compatibility.Status.Equals("compatible", StringComparison.OrdinalIgnoreCase);
 
     public string RollbackLabel => SupportsRollback
-        ? "Удаление с проверкой файлов"
-        : "Откат не поддерживается";
+        ? Text.Get("Product.SafeRemoval")
+        : Text.Get("Product.NoRollback");
 }

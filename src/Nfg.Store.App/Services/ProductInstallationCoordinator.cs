@@ -4,6 +4,7 @@ using Nfg.Store.Contracts;
 using Nfg.Store.Core;
 using Nfg.Store.Installation;
 using Nfg.Store.Platform.Windows;
+using Nfg.Store.App.Localization;
 
 namespace Nfg.Store.App.Services;
 
@@ -44,7 +45,9 @@ public sealed class ProductInstallationCoordinator(
         var installationKey = ProductInstallationKey.FromManifest(product);
         var installedState = await stateStore.LoadAsync(installationKey, cancellationToken)
             ?? throw new ProductInstallationException(
-                $"Installation slot '{installationKey}' is not installed through NFG Hub.");
+                LocalizationService.Instance.Format(
+                    "Install.SlotNotInstalled",
+                    installationKey));
         return await ApplyVariantAsync(
             product,
             installedState.ProductId,
@@ -70,7 +73,7 @@ public sealed class ProductInstallationCoordinator(
                     cancellationToken);
                 progress?.Report(new ProductInstallProgress(
                     0,
-                    "Поиск игры и проверка версии…"));
+                    LocalizationService.Instance.Get("Install.FindGame")));
                 var installation = SelectInstallation(
                     product,
                     currentState?.GameRoot);
@@ -78,7 +81,7 @@ public sealed class ProductInstallationCoordinator(
                 var downloadProgress = new Progress<PackageDownloadProgress>(value =>
                     progress?.Report(new ProductInstallProgress(
                         8 + value.Percentage * 0.66,
-                        $"Загрузка выбранного варианта: {value.Percentage:0}%")));
+                        LocalizationService.Instance.Format("Install.Download", value.Percentage))));
                 var archivePath = await _downloader.DownloadAsync(
                     product,
                     _downloadRoot,
@@ -87,7 +90,7 @@ public sealed class ProductInstallationCoordinator(
 
                 progress?.Report(new ProductInstallProgress(
                     76,
-                    "Проверка пакета и контрольных сумм…"));
+                    LocalizationService.Instance.Get("Install.Verify")));
                 var package = await _archiveService.ValidateAsync(
                     archivePath,
                     product,
@@ -95,14 +98,14 @@ public sealed class ProductInstallationCoordinator(
 
                 progress?.Report(new ProductInstallProgress(
                     88,
-                    "Повторная проверка версии игры…"));
+                    LocalizationService.Instance.Get("Install.Recheck")));
                 installation = RequireInstallationAtRoot(
                     product,
                     installation.GameRoot);
 
                 progress?.Report(new ProductInstallProgress(
                     92,
-                    "Безопасное применение выбранного варианта…"));
+                    LocalizationService.Instance.Get("Install.Apply")));
                 var result = expectedProductId is null
                     ? await _installer.InstallAsync(
                         package,
@@ -120,7 +123,7 @@ public sealed class ProductInstallationCoordinator(
 
                 progress?.Report(new ProductInstallProgress(
                     100,
-                    "Выбранный вариант применён."));
+                    LocalizationService.Instance.Get("Install.Applied")));
                 return result;
             });
     }
@@ -226,12 +229,16 @@ public sealed class ProductInstallationCoordinator(
         {
             var outcome = await ReadActualOutcomeAsync(installationKey);
             var actualOutcome = !outcome.IsReadable
-                ? "Фактическое состояние не удалось безопасно прочитать; persisted evidence сохранён."
+                ? LocalizationService.Instance.Get("Install.ActualReadFailed")
                 : outcome.State is null
-                    ? "Фактическое состояние: слот не установлен."
-                    : $"Фактическое состояние: {outcome.State.ProductId} " +
-                      $"{outcome.State.Version}, " +
-                      (outcome.State.IsEnabled ? "включён." : "выключен.");
+                    ? LocalizationService.Instance.Get("Install.ActualNotInstalled")
+                    : LocalizationService.Instance.Format(
+                        "Install.ActualInstalled",
+                        outcome.State.ProductId,
+                        outcome.State.Version,
+                        outcome.State.IsEnabled
+                            ? LocalizationService.Instance.Get("State.ActualEnabled")
+                            : LocalizationService.Instance.Get("State.ActualDisabled"));
             throw new ProductInstallationException(
                 $"{exception.Message} {actualOutcome}",
                 exception,
@@ -266,7 +273,7 @@ public sealed class ProductInstallationCoordinator(
         if (candidates.Count == 0)
         {
             throw new ProductInstallationException(
-                $"Игра Steam App ID {appId} не найдена.");
+                LocalizationService.Instance.Format("Install.GameNotFound", appId));
         }
 
         if (!string.IsNullOrWhiteSpace(preferredGameRoot))
@@ -274,7 +281,9 @@ public sealed class ProductInstallationCoordinator(
             return candidates.FirstOrDefault(candidate =>
                        PathsEqual(candidate.GameRoot, preferredGameRoot))
                    ?? throw new ProductInstallationException(
-                       $"Управляемая установка игры '{Path.GetFullPath(preferredGameRoot)}' не найдена в Steam.");
+                       LocalizationService.Instance.Format(
+                           "Install.ManagedGameNotFound",
+                           Path.GetFullPath(preferredGameRoot)));
         }
 
         var expectedBuildId = GetExpectedSteamBuildId(product);
@@ -294,7 +303,7 @@ public sealed class ProductInstallationCoordinator(
     private static string GetSteamAppId(ProductManifest product) =>
         TryGetSteamAppId(product)
         ?? throw new ProductInstallationException(
-            $"Продукт '{product.Id}' должен объявлять один Steam App ID.");
+            LocalizationService.Instance.Format("Install.MissingSteamAppId", product.Id));
 
     private static string? TryGetSteamAppId(ProductManifest product)
     {

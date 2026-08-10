@@ -10,7 +10,7 @@ public sealed class CatalogViewModel : PageViewModel
     public CatalogViewModel(
         IReadOnlyList<ProductStateViewModel> products,
         Action<ProductStateViewModel> openProduct)
-        : base("Каталог")
+        : base("Nav.Catalog", localizeTitle: true)
     {
         ArgumentNullException.ThrowIfNull(products);
         ArgumentNullException.ThrowIfNull(openProduct);

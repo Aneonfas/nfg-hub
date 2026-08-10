@@ -156,6 +156,8 @@ public sealed class ProductStateViewModel : PageViewModel
 
     public ProductViewModel Product => _product;
 
+    public override string Title => _product.Title;
+
     public ProductViewModel FeaturedProduct => _product;
 
     public string InstallationKey => _installationKey;
@@ -316,7 +318,7 @@ public sealed class ProductStateViewModel : PageViewModel
         SelectedVersion is not null && !IsSelectedVersionExact;
 
     public string LocalCompatibilityLabel =>
-        SelectedVersion?.CompatibilityLabel ?? "Нет доступной версии";
+        SelectedVersion?.CompatibilityLabel ?? Text.Get("State.NoVersion");
 
     public string CatalogVersionLabel =>
         _recommendedVersion?.Version ?? SelectedVersionLabel;
@@ -386,29 +388,31 @@ public sealed class ProductStateViewModel : PageViewModel
 
     public bool CanToggleProduct => !IsBusy && IsInstalled;
 
-    public string ActivationStatusText => IsProductEnabled ? "Включён" : "Выключен";
+    public string ActivationStatusText => IsProductEnabled
+        ? Text.Get("State.Enabled")
+        : Text.Get("State.Disabled");
 
     public string ToggleAutomationName => IsProductEnabled
-        ? "Выключить продукт"
-        : "Включить продукт";
+        ? Text.Get("State.Disable")
+        : Text.Get("State.Enable");
 
     public string CatalogStatusText => IsUpdateInProgress
         ? IsVariantSwitchInProgress
-            ? "СМЕНА ЯЗЫКА"
-            : "СМЕНА ВЕРСИИ"
+            ? Text.Get("State.SwitchingLanguage")
+            : Text.Get("State.SwitchingVersion")
         : IsInstallationInProgress
-            ? "УСТАНОВКА"
+            ? Text.Get("State.Installing")
             : HasVariantChange
-                ? "СМЕНИТЬ ЯЗЫК"
+                ? Text.Get("State.SwitchLanguage")
                 : HasRecommendedVersionChange
-                    ? "СМЕНИТЬ ВЕРСИЮ"
+                    ? Text.Get("State.SwitchVersion")
                     : IsInstalled
-                        ? "УСТАНОВЛЕНО"
+                        ? Text.Get("Common.Installed")
                         : IsInLibrary
-                            ? "В БИБЛИОТЕКЕ"
+                            ? Text.Get("State.InLibrary")
                             : IsCatalogVersionUnverified
-                                ? "НЕ ПРОВЕРЕНО"
-                                : "ДОСТУПНО";
+                                ? Text.Get("State.Unverified")
+                                : Text.Get("Common.Available");
 
     public string UpdateActionText => PrimaryActionText;
 
@@ -420,34 +424,37 @@ public sealed class ProductStateViewModel : PageViewModel
         {
             if (IsInstallationInProgress || IsUpdateInProgress)
             {
-                return "Выполняется…";
+                return Text.Get("State.Working");
             }
 
             if (IsBusy)
             {
-                return "Выполняется…";
+                return Text.Get("State.Working");
             }
 
             if (SelectedVersion?.IsPublished != true)
             {
-                return "Сборка готовится";
+                return Text.Get("State.BuildPreparing");
             }
 
             if (!IsInstalled)
             {
                 return IsSelectedVersionExact
-                    ? $"Установить {SelectedVersion.Version}"
-                    : "Установить всё равно";
+                    ? Text.Format("State.InstallVersion", SelectedVersion.Version)
+                    : Text.Get("State.InstallAnyway");
             }
 
             if (HasVariantChange)
             {
-                return $"Переключить {InstalledVariantLabel} → {SelectedVariantLabel}";
+                return Text.Format(
+                    "State.SwitchVariant",
+                    InstalledVariantLabel,
+                    SelectedVariantLabel);
             }
 
             if (!HasVersionChange)
             {
-                return "Установлено";
+                return Text.Get("Common.Installed");
             }
 
             return GetVersionSwitchActionText();
@@ -471,7 +478,10 @@ public sealed class ProductStateViewModel : PageViewModel
 
             if (IsSelectedVersionUnverified)
             {
-                return $"Совместимость версии {SelectedVersionLabel} не подтверждена: {LocalCompatibilityLabel}.";
+                return Text.Format(
+                    "State.CompatibilityUnverified",
+                    SelectedVersionLabel,
+                    LocalCompatibilityLabel);
             }
 
             if (HasRecommendedVersionChange)
@@ -486,7 +496,7 @@ public sealed class ProductStateViewModel : PageViewModel
 
             return SelectedVersion?.IsPublished == true
                 ? string.Empty
-                : "Установка появится после публикации сборки и проверки совместимости.";
+                : Text.Get("State.NotPublished");
         }
     }
 
@@ -494,7 +504,7 @@ public sealed class ProductStateViewModel : PageViewModel
         !string.IsNullOrWhiteSpace(AvailabilityMessage);
 
     public string SelectedReleaseChangesTitle =>
-        SelectedVersion?.ReleaseChangesTitle ?? "Изменения версии";
+        SelectedVersion?.ReleaseChangesTitle ?? Text.Get("State.ReleaseChanges");
 
     public IReadOnlyList<string> SelectedReleaseHighlights =>
         SelectedVersion?.ReleaseHighlights ?? [];
@@ -590,10 +600,10 @@ public sealed class ProductStateViewModel : PageViewModel
         IsVariantSwitchInProgress = wasVariantChange;
         OperationProgress = 0;
         OperationStatus = previousState is null
-            ? "Подготовка установки…"
+            ? Text.Get("State.PreparingInstall")
             : wasVariantChange
-                ? "Подготовка смены языка…"
-                : "Подготовка смены версии…";
+                ? Text.Get("State.PreparingLanguage")
+                : Text.Get("State.PreparingVersion");
 
         try
         {
@@ -614,20 +624,23 @@ public sealed class ProductStateViewModel : PageViewModel
                 ? result.Outcome switch
                 {
                     ManagedInstallOutcome.Adopted =>
-                        "Уже установленные идентичные файлы приняты под управление NFG Hub.",
+                        Text.Get("State.Adopted"),
                     ManagedInstallOutcome.AlreadyInstalled =>
-                        $"{Product.Title} уже установлен и прошёл проверку.",
-                    _ => $"{Product.Title} успешно установлен."
+                        Text.Format("State.AlreadyInstalled", Product.Title),
+                    _ => Text.Format("State.InstallSuccess", Product.Title)
                 }
                 : wasVariantChange
-                    ? $"Язык переключён: {previousVariantLabel} → {SelectedVariantLabel}."
+                    ? Text.Format(
+                        "State.LanguageSuccess",
+                        previousVariantLabel,
+                        SelectedVariantLabel)
                     : versionComparison > 0
-                        ? $"{Product.Title} обновлён до версии {result.State.Version}."
-                        : $"{Product.Title} переключён на версию {result.State.Version}.";
+                        ? Text.Format("State.UpdateSuccess", Product.Title, result.State.Version)
+                        : Text.Format("State.SwitchSuccess", Product.Title, result.State.Version);
         }
         catch (Exception exception)
         {
-            await HandleOperationErrorAsync(exception, "Операция остановлена");
+            await HandleOperationErrorAsync(exception, Text.Get("State.OperationStopped"));
         }
         finally
         {
@@ -651,8 +664,8 @@ public sealed class ProductStateViewModel : PageViewModel
         IsBusy = true;
         OperationProgress = 0;
         OperationStatus = enable
-            ? "Включение продукта…"
-            : "Выключение продукта…";
+            ? Text.Get("State.Enabling")
+            : Text.Get("State.Disabling");
 
         try
         {
@@ -662,12 +675,12 @@ public sealed class ProductStateViewModel : PageViewModel
                 enable);
             SetManagedState(state);
             OperationStatus = state.IsEnabled
-                ? "Продукт включён."
-                : "Продукт выключен. Файлы сохранены на устройстве.";
+                ? Text.Get("State.EnabledSuccess")
+                : Text.Get("State.DisabledSuccess");
         }
         catch (Exception exception)
         {
-            await HandleOperationErrorAsync(exception, "Операция остановлена");
+            await HandleOperationErrorAsync(exception, Text.Get("State.OperationStopped"));
         }
         finally
         {
@@ -686,7 +699,7 @@ public sealed class ProductStateViewModel : PageViewModel
         _operationHasError = false;
         IsBusy = true;
         OperationProgress = 0;
-        OperationStatus = "Проверка файлов продукта…";
+        OperationStatus = Text.Get("State.CheckingFiles");
 
         try
         {
@@ -694,11 +707,11 @@ public sealed class ProductStateViewModel : PageViewModel
                 _installationKey,
                 expectedState.ProductId);
             SetManagedState(null);
-            OperationStatus = "Удалено с устройства. Продукт остаётся в библиотеке.";
+            OperationStatus = Text.Get("State.RemovedDevice");
         }
         catch (Exception exception)
         {
-            await HandleOperationErrorAsync(exception, "Удаление остановлено");
+            await HandleOperationErrorAsync(exception, Text.Get("State.RemovalStopped"));
         }
         finally
         {
@@ -712,8 +725,8 @@ public sealed class ProductStateViewModel : PageViewModel
         IsBusy = true;
         OperationProgress = 0;
         OperationStatus = IsInstalled
-            ? "Удаление с устройства и из библиотеки…"
-            : "Удаление из библиотеки…";
+            ? Text.Get("State.RemovingAll")
+            : Text.Get("State.RemovingLibrary");
 
         try
         {
@@ -740,7 +753,7 @@ public sealed class ProductStateViewModel : PageViewModel
         {
             await HandleOperationErrorAsync(
                 exception,
-                "Удаление из библиотеки остановлено",
+                Text.Get("State.LibraryRemovalStopped"),
                 reloadLibrary: true);
         }
         finally
@@ -753,7 +766,7 @@ public sealed class ProductStateViewModel : PageViewModel
     {
         if (SelectedVersion?.IsPublished != true)
         {
-            throw new InvalidOperationException("Выбранная версия недоступна для установки.");
+            throw new InvalidOperationException(Text.Get("State.SelectedUnavailable"));
         }
 
         return ProductReleaseCatalog.CreateManifestForRelease(
@@ -784,22 +797,22 @@ public sealed class ProductStateViewModel : PageViewModel
 
         var testedBuild = SelectedVersion.TestedGameBuildLabel is { } value
             ? $"Steam BuildID {value}"
-            : "неуказанной сборке игры";
+            : Text.Get("State.UnspecifiedBuild");
         var detectedBuildMessage = string.IsNullOrWhiteSpace(detectedGameBuildId)
-            ? "Версию игры на этом устройстве определить не удалось."
-            : $"На этом устройстве обнаружен Steam BuildID {detectedGameBuildId}.";
-        var message =
-            $"Версия {SelectedVersion.Version} проверена на {testedBuild}. " +
-            $"{detectedBuildMessage}\n\n" +
-            "Продукт, вероятно, будет работать, но совместимость не подтверждена. " +
-            "Установить выбранную версию всё равно?";
+            ? Text.Get("State.DeviceBuildUnknown")
+            : Text.Format("State.DeviceBuild", detectedGameBuildId);
+        var message = Text.Format(
+            "State.CompatibilityPrompt",
+            SelectedVersion.Version,
+            testedBuild,
+            detectedBuildMessage);
 
         _isCompatibilityPromptOpen = true;
         try
         {
             return MessageBox.Show(
                 message,
-                "Совместимость не подтверждена",
+                Text.Get("State.CompatibilityPromptTitle"),
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning,
                 MessageBoxResult.No) == MessageBoxResult.Yes;
@@ -814,22 +827,22 @@ public sealed class ProductStateViewModel : PageViewModel
     {
         if (!HasVersionChange)
         {
-            return "Установлено";
+            return Text.Get("Common.Installed");
         }
 
         if (SelectedVersion?.IsPublished != true)
         {
-            return "Версия недоступна";
+            return Text.Get("State.VersionUnavailable");
         }
 
         if (IsSelectedVersionUnverified)
         {
-            return "Установить всё равно";
+            return Text.Get("State.InstallAnyway");
         }
 
         return CompareSelectedToInstalledVersion() > 0
-            ? $"Обновить до {SelectedVersion.Version}"
-            : $"Переключить на {SelectedVersion.Version}";
+            ? Text.Format("State.UpdateTo", SelectedVersion.Version)
+            : Text.Format("State.SwitchTo", SelectedVersion.Version);
     }
 
     private string GetRecommendedVersionText()
@@ -841,12 +854,12 @@ public sealed class ProductStateViewModel : PageViewModel
 
         if (!_recommendedVersion.IsExactlyCompatible)
         {
-            return $"Доступна версия {_recommendedVersion.Version}; совместимость не подтверждена";
+            return Text.Format("State.RecommendedUnverified", _recommendedVersion.Version);
         }
 
         return CompareRecommendedToInstalledVersion() > 0
-            ? $"Рекомендуется обновить до {_recommendedVersion.Version}"
-            : $"Для вашей сборки рекомендуется {_recommendedVersion.Version}";
+            ? Text.Format("State.RecommendedUpdate", _recommendedVersion.Version)
+            : Text.Format("State.RecommendedVersion", _recommendedVersion.Version);
     }
 
     private string GetRecommendedAvailabilityMessage()
@@ -858,12 +871,18 @@ public sealed class ProductStateViewModel : PageViewModel
 
         if (!_recommendedVersion.IsExactlyCompatible)
         {
-            return $"Доступна версия {_recommendedVersion.Version}, но её совместимость с текущей сборкой игры не подтверждена.";
+            return Text.Format("State.RecommendedUnverifiedLong", _recommendedVersion.Version);
         }
 
         return CompareRecommendedToInstalledVersion() > 0
-            ? $"Для текущей сборки игры рекомендуется обновление: {InstalledVersionLabel} → {_recommendedVersion.Version}."
-            : $"Для текущей сборки игры рекомендуется версия {_recommendedVersion.Version} вместо {InstalledVersionLabel}.";
+            ? Text.Format(
+                "State.RecommendedUpdateLong",
+                InstalledVersionLabel,
+                _recommendedVersion.Version)
+            : Text.Format(
+                "State.RecommendedVersionLong",
+                _recommendedVersion.Version,
+                InstalledVersionLabel);
     }
 
     private int CompareSelectedToInstalledVersion() =>
@@ -925,6 +944,7 @@ public sealed class ProductStateViewModel : PageViewModel
         OnPropertyChanged(nameof(SelectedVariant));
         OnPropertyChanged(nameof(SelectedVariantLabel));
         OnPropertyChanged(nameof(Product));
+        OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(FeaturedProduct));
         OnPropertyChanged(nameof(FamilyId));
         OnPropertyChanged(nameof(AvailableVersions));
@@ -971,7 +991,7 @@ public sealed class ProductStateViewModel : PageViewModel
         bool reloadLibrary = false)
     {
         _operationHasError = true;
-        var actualOutcome = "Фактическое состояние не удалось перечитать.";
+        var actualOutcome = Text.Get("State.ActualReadFailed");
         try
         {
             var actualState = await _installationCoordinator.LoadInstalledStateAsync(
@@ -979,15 +999,20 @@ public sealed class ProductStateViewModel : PageViewModel
                 CancellationToken.None);
             SetManagedState(actualState);
             actualOutcome = actualState is null
-                ? "Фактически сейчас слот не установлен."
-                : $"Фактически сейчас установлено {GetVariantLabel(actualState.ProductId)} " +
-                  $"{actualState.Version}; " +
-                  (actualState.IsEnabled ? "продукт включён." : "продукт выключен.");
+                ? Text.Get("State.ActualNotInstalled")
+                : Text.Format(
+                    "State.ActualInstalled",
+                    GetVariantLabel(actualState.ProductId),
+                    actualState.Version,
+                    actualState.IsEnabled
+                        ? Text.Get("State.ActualEnabled")
+                        : Text.Get("State.ActualDisabled"));
         }
         catch (Exception reloadException)
         {
-            actualOutcome =
-                $"Фактическое состояние не удалось перечитать: {reloadException.Message}";
+            actualOutcome = Text.Format(
+                "State.ActualReadFailedDetails",
+                reloadException.Message);
         }
 
         if (reloadLibrary)
@@ -1012,7 +1037,7 @@ public sealed class ProductStateViewModel : PageViewModel
     private void HandleUnexpectedOperationError(Exception exception)
     {
         _operationHasError = true;
-        OperationStatus = $"Операция остановлена: {exception.Message}";
+        OperationStatus = Text.Format("State.UnexpectedError", exception.Message);
         OperationProgress = 0;
         RefreshActionState();
     }
