@@ -274,8 +274,8 @@
                         <ContentPresenter Margin="14,7,42,7"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Center"
-                                          Content="{TemplateBinding SelectionBoxItem}"
-                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          Content="{Binding SelectedItem, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ContentTemplate="{TemplateBinding ItemTemplate}"
                                           IsHitTestVisible="False" />
                         <Path Width="10"
                               Height="6"
