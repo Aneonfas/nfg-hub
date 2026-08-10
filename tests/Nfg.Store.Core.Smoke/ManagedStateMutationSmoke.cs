@@ -211,6 +211,8 @@ internal static class ManagedStateMutationSmoke
     {
         await CheckSetEnabledCleanupRetryAsync(Path.Combine(root, "set-enabled"));
         await CheckUninstallCleanupRetryAsync(Path.Combine(root, "uninstall"));
+        await CheckUninstallRecreatedTombstoneAsync(
+            Path.Combine(root, "uninstall-recreated-tombstone"));
     }
 
     private static async Task CheckSetEnabledCleanupRetryAsync(string root)
@@ -256,24 +258,15 @@ internal static class ManagedStateMutationSmoke
     private static async Task CheckUninstallCleanupRetryAsync(string root)
     {
         var fixture = await CreateInstalledFixtureAsync(root, isEnabled: true);
-        FileStream? heldTombstone = null;
+        FileStream? heldJournal = null;
         var installer = new ManagedFilesInstaller(fixture.StateStore)
         {
             PhaseObserver = phase =>
             {
                 if (phase == ManagedInstallerPhase.StateCommitted)
                 {
-                    var secondSource = ResolveManagedPath(
-                        fixture.GameRoot,
-                        SecondDestination);
-                    var tombstone = Directory
-                        .EnumerateFiles(
-                            Path.GetDirectoryName(secondSource)!,
-                            $"{Path.GetFileName(secondSource)}.nfg-remove-*",
-                            SearchOption.TopDirectoryOnly)
-                        .Single();
-                    heldTombstone = new FileStream(
-                        tombstone,
+                    heldJournal = new FileStream(
+                        GetMutationJournalPath(fixture.DataRoot),
                         FileMode.Open,
                         FileAccess.Read,
                         FileShare.Read);
@@ -288,13 +281,17 @@ internal static class ManagedStateMutationSmoke
             "Uninstall cleanup failure restored committed state.");
         Assert(File.Exists(GetMutationJournalPath(fixture.DataRoot)),
             "Uninstall cleanup failure did not retain its retry journal.");
-        var firstSource = ResolveManagedPath(fixture.GameRoot, FirstDestination);
-        Assert(!Directory.EnumerateFiles(
-                Path.GetDirectoryName(firstSource)!,
-                $"{Path.GetFileName(firstSource)}.nfg-remove-*",
-                SearchOption.TopDirectoryOnly).Any(),
-            "Uninstall cleanup did not reach a partial tombstone-cleanup state.");
-        heldTombstone?.Dispose();
+        foreach (var destination in new[] { FirstDestination, SecondDestination })
+        {
+            var source = ResolveManagedPath(fixture.GameRoot, destination);
+            Assert(Directory.EnumerateFiles(
+                    Path.GetDirectoryName(source)!,
+                    $"{Path.GetFileName(source)}.nfg-remove-*",
+                    SearchOption.TopDirectoryOnly).Count() == 1,
+                "Uninstall deleted a tombstone before its journal became terminal.");
+        }
+
+        heldJournal?.Dispose();
 
         await new ManagedFilesInstaller(fixture.StateStore)
             .RecoverPendingOperationsAsync();
@@ -302,6 +299,127 @@ internal static class ManagedStateMutationSmoke
             "Uninstall cleanup retry restored committed state.");
         AssertManagedFilesAbsent(fixture.GameRoot);
         AssertNoMutationArtifacts(fixture.DataRoot, fixture.GameRoot);
+    }
+
+    private static async Task CheckUninstallRecreatedTombstoneAsync(string root)
+    {
+        await CheckUninstallRecreatedTombstoneAtPhaseAsync(
+            Path.Combine(root, "first-quarantine"),
+            ManagedInstallerPhase.FileQuarantined);
+        await CheckUninstallRecreatedTombstoneAtPhaseAsync(
+            Path.Combine(root, "first-delete"),
+            ManagedInstallerPhase.FileCleanupCompleted);
+    }
+
+    private static async Task CheckUninstallRecreatedTombstoneAtPhaseAsync(
+        string root,
+        ManagedInstallerPhase interruptionPhase)
+    {
+        var fixture = await CreateInstalledFixtureAsync(root, isEnabled: true);
+        string? firstTombstone = null;
+        string? secondTombstone = null;
+        string? operationId = null;
+        var completedTargetPhase = 0;
+        var installer = new ManagedFilesInstaller(fixture.StateStore)
+        {
+            PhaseObserver = phase =>
+            {
+                if (phase == ManagedInstallerPhase.StateCommitted)
+                {
+                    firstTombstone = FindRemovalTombstone(
+                        fixture.GameRoot,
+                        FirstDestination);
+                    secondTombstone = FindRemovalTombstone(
+                        fixture.GameRoot,
+                        SecondDestination);
+                    using var journal = JsonDocument.Parse(
+                        File.ReadAllBytes(GetMutationJournalPath(fixture.DataRoot)));
+                    operationId = journal.RootElement
+                        .GetProperty("operationId")
+                        .GetString();
+                }
+
+                if (phase == interruptionPhase && ++completedTargetPhase == 1)
+                {
+                    throw new ManagedInstallerInterruptionException(
+                        $"Injected tombstone interruption at {phase}.");
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+
+        await installer.UninstallAsync(InstallationKey, RuProductId);
+        var deletedPath = firstTombstone
+            ?? throw new InvalidOperationException("First tombstone path was not recorded.");
+        var possibleOrphanPath = secondTombstone
+            ?? throw new InvalidOperationException("Second tombstone path was not recorded.");
+        var actualOperationId = operationId
+            ?? throw new InvalidOperationException("Uninstall operation ID was not recorded.");
+        var terminalPaths = new[] { deletedPath, possibleOrphanPath }
+            .Select(path => GetTerminalQuarantinePath(path, actualOperationId))
+            .ToArray();
+
+        if (interruptionPhase == ManagedInstallerPhase.FileQuarantined)
+        {
+            Assert(File.Exists(GetMutationJournalPath(fixture.DataRoot)),
+                "Uninstall lost recovery authority after its first tombstone quarantine.");
+            Assert(!File.Exists(deletedPath) && File.Exists(terminalPaths[0]) &&
+                   File.Exists(possibleOrphanPath) && !File.Exists(terminalPaths[1]),
+                "First-quarantine interruption left the wrong tombstone state.");
+            await File.WriteAllBytesAsync(deletedPath, FirstPayload);
+        }
+        else
+        {
+            Assert(!File.Exists(GetMutationJournalPath(fixture.DataRoot)),
+                "Uninstall retained recovery authority after its first terminal delete.");
+            Assert(!File.Exists(deletedPath) && !File.Exists(possibleOrphanPath) &&
+                   !File.Exists(terminalPaths[0]) && File.Exists(terminalPaths[1]),
+                "First-delete interruption left the wrong terminal tombstone state.");
+            await File.WriteAllBytesAsync(terminalPaths[0], FirstPayload);
+            await File.WriteAllBytesAsync(deletedPath, FirstPayload);
+        }
+
+        var remainingEvidencePath = interruptionPhase == ManagedInstallerPhase.FileQuarantined
+            ? terminalPaths[0]
+            : terminalPaths[1];
+        var remainingEvidenceBytes = await File.ReadAllBytesAsync(remainingEvidencePath);
+        if (interruptionPhase == ManagedInstallerPhase.FileQuarantined)
+        {
+            var journalPath = GetMutationJournalPath(fixture.DataRoot);
+            var journalBefore = await File.ReadAllBytesAsync(journalPath);
+            var gameBefore = SnapshotDirectory(fixture.GameRoot);
+            await AssertThrowsAsync<ManagedFilesInstallException>(
+                () => new ManagedFilesInstaller(fixture.StateStore)
+                    .RecoverPendingOperationsAsync(),
+                "Tombstone retry accepted ambiguous source+quarantine evidence.");
+            await AssertThrowsAsync<ManagedFilesInstallException>(
+                () => new ManagedFilesInstaller(fixture.StateStore)
+                    .RecoverPendingOperationsAsync(),
+                "Repeated tombstone retry accepted ambiguous evidence.");
+            Assert(File.ReadAllBytes(journalPath).AsSpan().SequenceEqual(journalBefore) &&
+                   SnapshotDirectory(fixture.GameRoot) == gameBefore,
+                "Fail-closed tombstone retry changed transaction evidence.");
+        }
+        else
+        {
+            await new ManagedFilesInstaller(fixture.StateStore).RecoverPendingOperationsAsync();
+            await new ManagedFilesInstaller(fixture.StateStore).RecoverPendingOperationsAsync();
+            Assert(File.Exists(deletedPath) &&
+                   File.ReadAllBytes(deletedPath).AsSpan().SequenceEqual(FirstPayload),
+                "Recovery deleted a recreated tombstone source after authority revoke.");
+            Assert(File.Exists(terminalPaths[0]) &&
+                   File.ReadAllBytes(terminalPaths[0]).AsSpan().SequenceEqual(FirstPayload),
+                "Recovery deleted a recreated terminal tombstone quarantine.");
+            Assert(File.Exists(terminalPaths[1]) &&
+                   File.ReadAllBytes(terminalPaths[1]).AsSpan()
+                       .SequenceEqual(remainingEvidenceBytes),
+                "Recovery deleted remaining tombstone evidence after authority revoke.");
+        }
+
+        Assert(await fixture.StateStore.LoadAsync(InstallationKey) is null,
+            "Repeated tombstone recovery restored uninstalled state.");
+        AssertManagedFilesAbsent(fixture.GameRoot);
     }
 
     private static async Task CheckMutationJournalValidationAsync(string root)
@@ -1127,6 +1245,16 @@ internal static class ManagedStateMutationSmoke
             gameRoot,
             destination.Replace('/', Path.DirectorySeparatorChar));
 
+    private static string FindRemovalTombstone(string gameRoot, string destination)
+    {
+        var source = ResolveManagedPath(gameRoot, destination);
+        return Directory.EnumerateFiles(
+                Path.GetDirectoryName(source)!,
+                $"{Path.GetFileName(source)}.nfg-remove-*",
+                SearchOption.TopDirectoryOnly)
+            .Single();
+    }
+
     private static string GetMutationJournalPath(string dataRoot) => Path.Combine(
         dataRoot,
         "state",
@@ -1138,6 +1266,9 @@ internal static class ManagedStateMutationSmoke
         "state",
         "transactions",
         $"{InstallationKey}.update.json");
+
+    private static string GetTerminalQuarantinePath(string path, string operationId) =>
+        $"{path}.nfg-terminal-{operationId}.quarantine";
 
     private static string GetStatePath(string dataRoot) => Path.Combine(
         dataRoot,

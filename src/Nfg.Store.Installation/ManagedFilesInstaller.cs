@@ -569,7 +569,7 @@ public sealed class ManagedFilesInstaller
                 newPlan.PackageFile.Sha256,
                 "ready",
                 CancellationToken.None);
-            await DeleteVerifiedStageMarkerAsync(
+            await DeleteForwardExtractingMarkerAsync(
                 extractingMarkerPath,
                 operationId,
                 newPlan.PackageFile.DestinationRelativePath,
@@ -761,9 +761,11 @@ public sealed class ManagedFilesInstaller
         var operationId = Guid.NewGuid().ToString("N");
         foreach (var target in targets)
         {
-            EnsurePathIsVacant(GetRemovalTombstonePath(
+            var tombstone = GetRemovalTombstonePath(
                 GetStateFilePath(target, state.IsEnabled),
-                operationId));
+                operationId);
+            EnsurePathIsVacant(tombstone);
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(tombstone, operationId));
         }
 
         var journal = new ManagedStateMutationJournal
@@ -869,6 +871,7 @@ public sealed class ManagedFilesInstaller
                 {
                     await VerifyStateFilesAsync(journal.NewState!, CancellationToken.None);
                     _mutationJournalStore.Delete(journal.InstallationKey);
+                    await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
                     return;
                 }
 
@@ -930,6 +933,7 @@ public sealed class ManagedFilesInstaller
 
         await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
         _mutationJournalStore.Delete(journal.InstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
     }
 
     private async Task RollBackUninstallAsync(ManagedStateMutationJournal journal)
@@ -959,31 +963,41 @@ public sealed class ManagedFilesInstaller
 
         await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
         _mutationJournalStore.Delete(journal.InstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
     }
 
     private async Task FinalizeUninstallAsync(ManagedStateMutationJournal journal)
     {
+        var quarantines = new List<RecoveryQuarantine>();
         foreach (var plan in CreateStateFilePlans(journal.OldState))
         {
             var source = GetStateFilePath(plan, journal.OldState.IsEnabled);
             var tombstone = GetRemovalTombstonePath(source, journal.OperationId);
-            EnsureMutationPathsAreRegularOrAbsent(source, tombstone);
+            var quarantinePath = GetRecoveryQuarantinePath(
+                tombstone,
+                journal.OperationId);
+            EnsureMutationPathsAreRegularOrAbsent(source, tombstone, quarantinePath);
             if (File.Exists(source))
             {
                 throw new ManagedFilesInstallException(
                     $"Committed uninstall found an unexpected live file at '{source}'.");
             }
 
-            if (!File.Exists(tombstone))
+            var quarantine = await QuarantineStateFileIfPresentAsync(
+                tombstone,
+                journal.OperationId,
+                plan.State,
+                "uninstall tombstone");
+            if (quarantine is not null)
             {
-                continue;
+                quarantines.Add(quarantine);
             }
-
-            await VerifyMutationFileAsync(tombstone, plan.State);
-            File.Delete(tombstone);
         }
 
+        await VerifyRecoveryQuarantinesAsync(quarantines);
         _mutationJournalStore.Delete(journal.InstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
+        await DeleteQuarantinesBestEffortAsync(quarantines);
     }
 
     private static async Task VerifyMutationFileAsync(
@@ -1076,6 +1090,7 @@ public sealed class ManagedFilesInstaller
         }
 
         await VerifyStateFilesAsync(journal.OldState, CancellationToken.None);
+        var quarantines = new List<RecoveryQuarantine>();
         var unchanged = GetUnchangedDestinations(journal.OldState, journal.NewState);
         foreach (var newPlan in CreateStateFilePlans(journal.NewState).Where(plan =>
                      !unchanged.Contains(plan.State.Destination)))
@@ -1083,26 +1098,54 @@ public sealed class ManagedFilesInstaller
             var finalPath = GetStateFilePath(newPlan, journal.NewState.IsEnabled);
             var stagePath = GetUpdateStagePath(finalPath, journal.OperationId);
             var markerPath = GetUpdateNotActivatedMarkerPath(stagePath);
-            EnsureTemporaryPathIsNotDirectory(markerPath);
-            if (File.Exists(markerPath))
+            var marker = await QuarantineStageMarkerIfPresentAsync(
+                markerPath,
+                journal.OperationId,
+                newPlan.State.Destination,
+                newPlan.State.SizeBytes,
+                newPlan.State.Sha256,
+                "not-activated");
+            if (marker is not null)
             {
-                await DeleteVerifiedStageMarkerAsync(
-                    markerPath,
+                quarantines.Add(marker);
+            }
+
+            if (File.Exists(GetRecoveryQuarantinePath(stagePath, journal.OperationId)))
+            {
+                var stage = await QuarantineRegularFileIfPresentAsync(
+                    stagePath,
                     journal.OperationId,
-                    newPlan.State.Destination,
-                    newPlan.State.SizeBytes,
-                    newPlan.State.Sha256,
-                    "not-activated");
+                    "legacy rollback stage");
+                if (stage is not null)
+                {
+                    quarantines.Add(stage);
+                }
+            }
+
+            if (File.Exists(GetRecoveryQuarantinePath(finalPath, journal.OperationId)))
+            {
+                var final = await DescribeExistingStateQuarantineAsync(
+                    finalPath,
+                    journal.OperationId,
+                    newPlan.State);
+                if (final is not null)
+                {
+                    quarantines.Add(final);
+                }
             }
         }
 
         await ObserveAsync(ManagedInstallerPhase.RollbackCleanupCompleted);
+        await VerifyRecoveryQuarantinesAsync(quarantines);
         _journalStore.Delete(journal.EffectiveInstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
+        await DeleteQuarantinesBestEffortAsync(quarantines);
     }
 
     private async Task FinalizeCommittedOperationAsync(ManagedUpdateJournal journal)
     {
         await VerifyStateFilesAsync(journal.NewState, CancellationToken.None);
+        var quarantines = new List<RecoveryQuarantine>();
         var unchanged = GetUnchangedDestinations(journal.OldState, journal.NewState);
         var retained = unchanged
             .Concat(journal.PreservedDestinations)
@@ -1113,22 +1156,21 @@ public sealed class ManagedFilesInstaller
         {
             var finalPath = GetStateFilePath(newPlan, journal.NewState.IsEnabled);
             var stagePath = GetUpdateStagePath(finalPath, journal.OperationId);
-            await FinalizeStagingEvidenceAsync(journal, newPlan, stagePath);
+            await FinalizeStagingEvidenceAsync(
+                journal,
+                newPlan,
+                stagePath,
+                quarantines);
         }
 
         if (journal.OldState is not null)
         {
             if (journal.SchemaVersion == 1)
             {
-                foreach (var oldPlan in CreateStateFilePlans(journal.OldState).Where(plan =>
-                             !unchanged.Contains(plan.State.Destination)))
-                {
-                    var originalPath = GetStateFilePath(oldPlan, journal.OldState.IsEnabled);
-                    await DeleteVerifiedOwnedFileIfPresentAsync(
-                        GetUpdateBackupPath(originalPath, journal.OperationId),
-                        oldPlan.State.SizeBytes,
-                        oldPlan.State.Sha256);
-                }
+                await QuarantineLegacyCommittedBackupsAsync(
+                    journal,
+                    unchanged,
+                    quarantines);
             }
             else
             {
@@ -1141,11 +1183,17 @@ public sealed class ManagedFilesInstaller
                     await ObserveAsync(ManagedInstallerPhase.CleanupPrepared);
                 }
 
-                await DeletePreparedBackupCleanupAsync(journal, unchanged);
+                await QuarantinePreparedBackupCleanupAsync(
+                    journal,
+                    unchanged,
+                    quarantines);
             }
         }
 
+        await VerifyRecoveryQuarantinesAsync(quarantines);
         _journalStore.Delete(journal.EffectiveInstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
+        await DeleteQuarantinesBestEffortAsync(quarantines);
     }
 
     private static async Task PrepareCommittedBackupCleanupAsync(
@@ -1158,7 +1206,16 @@ public sealed class ManagedFilesInstaller
             var originalPath = GetStateFilePath(oldPlan, journal.OldState!.IsEnabled);
             var backupPath = GetUpdateBackupPath(originalPath, journal.OperationId);
             var cleanupPath = GetUpdateBackupCleanupPath(backupPath);
-            EnsureMutationPathsAreRegularOrAbsent(backupPath, cleanupPath);
+            var terminalPath = GetRecoveryQuarantinePath(
+                cleanupPath,
+                journal.OperationId);
+            EnsureMutationPathsAreRegularOrAbsent(backupPath, cleanupPath, terminalPath);
+            if (File.Exists(terminalPath))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Committed cleanup found premature terminal evidence for '{originalPath}'.");
+            }
+
             var hasBackup = File.Exists(backupPath);
             var hasCleanup = File.Exists(cleanupPath);
             if (hasBackup && hasCleanup)
@@ -1171,6 +1228,15 @@ public sealed class ManagedFilesInstaller
             {
                 await VerifyMutationFileAsync(backupPath, oldPlan.State);
                 File.Move(backupPath, cleanupPath);
+                try
+                {
+                    await VerifyMutationFileAsync(cleanupPath, oldPlan.State);
+                }
+                catch
+                {
+                    TryRestoreQuarantinedFile(cleanupPath, backupPath);
+                    throw;
+                }
             }
             else if (hasCleanup)
             {
@@ -1184,9 +1250,32 @@ public sealed class ManagedFilesInstaller
         }
     }
 
-    private async Task DeletePreparedBackupCleanupAsync(
+    private async Task QuarantineLegacyCommittedBackupsAsync(
         ManagedUpdateJournal journal,
-        IReadOnlySet<string> unchanged)
+        IReadOnlySet<string> unchanged,
+        List<RecoveryQuarantine> quarantines)
+    {
+        foreach (var oldPlan in CreateStateFilePlans(journal.OldState!).Where(plan =>
+                     !unchanged.Contains(plan.State.Destination)))
+        {
+            var originalPath = GetStateFilePath(oldPlan, journal.OldState!.IsEnabled);
+            var backupPath = GetUpdateBackupPath(originalPath, journal.OperationId);
+            var quarantine = await QuarantineStateFileIfPresentAsync(
+                backupPath,
+                journal.OperationId,
+                oldPlan.State,
+                "legacy committed backup");
+            if (quarantine is not null)
+            {
+                quarantines.Add(quarantine);
+            }
+        }
+    }
+
+    private async Task QuarantinePreparedBackupCleanupAsync(
+        ManagedUpdateJournal journal,
+        IReadOnlySet<string> unchanged,
+        List<RecoveryQuarantine> quarantines)
     {
         foreach (var oldPlan in CreateStateFilePlans(journal.OldState!).Where(plan =>
                      !unchanged.Contains(plan.State.Destination)))
@@ -1194,104 +1283,84 @@ public sealed class ManagedFilesInstaller
             var originalPath = GetStateFilePath(oldPlan, journal.OldState!.IsEnabled);
             var cleanupPath = GetUpdateBackupCleanupPath(
                 GetUpdateBackupPath(originalPath, journal.OperationId));
-            EnsureMutationPathsAreRegularOrAbsent(cleanupPath);
-            if (!File.Exists(cleanupPath))
+            var quarantine = await QuarantineStateFileIfPresentAsync(
+                cleanupPath,
+                journal.OperationId,
+                oldPlan.State,
+                "prepared committed backup");
+            if (quarantine is not null)
             {
-                continue;
+                quarantines.Add(quarantine);
             }
-
-            await VerifyMutationFileAsync(cleanupPath, oldPlan.State);
-            File.Delete(cleanupPath);
-            await ObserveAsync(ManagedInstallerPhase.FileCleanupCompleted);
         }
     }
 
-    private static async Task FinalizeStagingEvidenceAsync(
+    private async Task FinalizeStagingEvidenceAsync(
         ManagedUpdateJournal journal,
         StateFilePlan newPlan,
-        string stagePath)
+        string stagePath,
+        List<RecoveryQuarantine> quarantines)
     {
         if (journal.SchemaVersion == 1)
         {
-            DeleteLegacyStageFileIfPresent(stagePath);
+            var legacyStage = await QuarantineRegularFileIfPresentAsync(
+                stagePath,
+                journal.OperationId,
+                "legacy committed stage");
+            if (legacyStage is not null)
+            {
+                quarantines.Add(legacyStage);
+            }
+
             return;
         }
 
         var partialPath = GetUpdatePartialPath(stagePath);
         var extractingMarkerPath = GetUpdateExtractingMarkerPath(stagePath);
         var readyMarkerPath = GetUpdateReadyMarkerPath(stagePath);
-        EnsureTemporaryPathIsNotDirectory(stagePath);
-        EnsureTemporaryPathIsNotDirectory(partialPath);
-        EnsureTemporaryPathIsNotDirectory(extractingMarkerPath);
-        EnsureTemporaryPathIsNotDirectory(readyMarkerPath);
-
-        var hasExtractingMarker = File.Exists(extractingMarkerPath);
-        var hasReadyMarker = File.Exists(readyMarkerPath);
-        if (hasExtractingMarker)
-        {
-            await VerifyStageMarkerAsync(
-                extractingMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "extracting");
-        }
-
-        if (hasReadyMarker)
-        {
-            await VerifyStageMarkerAsync(
-                readyMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "ready");
-        }
-
         if (File.Exists(stagePath) ||
+            File.Exists(GetRecoveryQuarantinePath(stagePath, journal.OperationId)) ||
             File.Exists(partialPath) ||
-            hasExtractingMarker)
+            File.Exists(GetRecoveryQuarantinePath(partialPath, journal.OperationId)) ||
+            File.Exists(extractingMarkerPath) ||
+            File.Exists(GetRecoveryQuarantinePath(extractingMarkerPath, journal.OperationId)))
         {
             throw new ManagedFilesInstallException(
                 $"Committed recovery found ambiguous staging evidence for '{newPlan.State.Destination}'.");
         }
 
-        if (hasReadyMarker)
+        var readyMarker = await QuarantineStageMarkerIfPresentAsync(
+            readyMarkerPath,
+            journal.OperationId,
+            newPlan.State.Destination,
+            newPlan.State.SizeBytes,
+            newPlan.State.Sha256,
+            "ready");
+        if (readyMarker is not null)
         {
-            await DeleteVerifiedStageMarkerAsync(
-                readyMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "ready");
+            quarantines.Add(readyMarker);
         }
     }
 
-    private static async Task<RollbackStagingEvidence> RollBackStagingEvidenceAsync(
+    private async Task<RollbackStagingEvidence> RollBackStagingEvidenceAsync(
         ManagedUpdateJournal journal,
         StateFilePlan newPlan,
-        string stagePath)
+        string stagePath,
+        List<RecoveryQuarantine> quarantines)
     {
         if (journal.SchemaVersion == 1)
         {
-            EnsureTemporaryPathIsNotDirectory(stagePath);
+            var stageQuarantinePath = GetRecoveryQuarantinePath(
+                stagePath,
+                journal.OperationId);
+            var hadStage = File.Exists(stagePath) || File.Exists(stageQuarantinePath);
             var notActivatedMarkerPath = GetUpdateNotActivatedMarkerPath(stagePath);
-            EnsureTemporaryPathIsNotDirectory(notActivatedMarkerPath);
-            var hasNotActivatedMarker = File.Exists(notActivatedMarkerPath);
-            if (hasNotActivatedMarker)
-            {
-                await VerifyStageMarkerAsync(
-                    notActivatedMarkerPath,
-                    journal.OperationId,
-                    newPlan.State.Destination,
-                    newPlan.State.SizeBytes,
-                    newPlan.State.Sha256,
-                    "not-activated");
-            }
-
-            if (File.Exists(stagePath) && !hasNotActivatedMarker)
+            var markerQuarantinePath = GetRecoveryQuarantinePath(
+                notActivatedMarkerPath,
+                journal.OperationId);
+            var hadNotActivatedMarker =
+                File.Exists(notActivatedMarkerPath) || File.Exists(markerQuarantinePath);
+            if (File.Exists(stagePath) && !hadNotActivatedMarker)
             {
                 await WriteStageMarkerAsync(
                     notActivatedMarkerPath,
@@ -1301,55 +1370,49 @@ public sealed class ManagedFilesInstaller
                     newPlan.State.Sha256,
                     "not-activated",
                     CancellationToken.None);
-                hasNotActivatedMarker = true;
+                hadNotActivatedMarker = true;
             }
 
-            if (File.Exists(stagePath))
+            var legacyStage = await QuarantineRegularFileIfPresentAsync(
+                stagePath,
+                journal.OperationId,
+                "legacy rollback stage");
+            if (legacyStage is not null)
             {
-                DeleteLegacyStageFileIfPresent(stagePath);
+                quarantines.Add(legacyStage);
+            }
+
+            var marker = await QuarantineStageMarkerIfPresentAsync(
+                notActivatedMarkerPath,
+                journal.OperationId,
+                newPlan.State.Destination,
+                newPlan.State.SizeBytes,
+                newPlan.State.Sha256,
+                "not-activated");
+            if (marker is not null)
+            {
+                quarantines.Add(marker);
             }
 
             return new RollbackStagingEvidence(
-                MayHaveActivatedFinal: !hasNotActivatedMarker,
-                ReadyMarkerPath: null,
-                DeferredNotActivatedMarkerPath:
-                    hasNotActivatedMarker ? notActivatedMarkerPath : null);
+                MayHaveActivatedFinal: !hadStage && !hadNotActivatedMarker);
         }
 
         var partialPath = GetUpdatePartialPath(stagePath);
         var extractingMarkerPath = GetUpdateExtractingMarkerPath(stagePath);
         var readyMarkerPath = GetUpdateReadyMarkerPath(stagePath);
-        EnsureTemporaryPathIsNotDirectory(stagePath);
-        EnsureTemporaryPathIsNotDirectory(partialPath);
-        EnsureTemporaryPathIsNotDirectory(extractingMarkerPath);
-        EnsureTemporaryPathIsNotDirectory(readyMarkerPath);
-
-        var hasStage = File.Exists(stagePath);
-        var hasPartial = File.Exists(partialPath);
-        var hasExtractingMarker = File.Exists(extractingMarkerPath);
-        var hasReadyMarker = File.Exists(readyMarkerPath);
-        if (hasExtractingMarker)
-        {
-            await VerifyStageMarkerAsync(
-                extractingMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "extracting");
-        }
-
-        if (hasReadyMarker)
-        {
-            await VerifyStageMarkerAsync(
-                readyMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "ready");
-        }
-
+        var hasStage = File.Exists(stagePath) ||
+                       File.Exists(GetRecoveryQuarantinePath(stagePath, journal.OperationId));
+        var hasPartial = File.Exists(partialPath) ||
+                         File.Exists(GetRecoveryQuarantinePath(partialPath, journal.OperationId));
+        var hasExtractingMarker = File.Exists(extractingMarkerPath) ||
+                                  File.Exists(GetRecoveryQuarantinePath(
+                                      extractingMarkerPath,
+                                      journal.OperationId));
+        var hasReadyMarker = File.Exists(readyMarkerPath) ||
+                             File.Exists(GetRecoveryQuarantinePath(
+                                 readyMarkerPath,
+                                 journal.OperationId));
         if (hasPartial && (!hasExtractingMarker || hasReadyMarker || hasStage) ||
             hasStage && !hasExtractingMarker && !hasReadyMarker ||
             hasExtractingMarker && hasReadyMarker && !hasStage)
@@ -1358,105 +1421,51 @@ public sealed class ManagedFilesInstaller
                 $"Rollback cannot prove ownership of staging evidence for '{newPlan.State.Destination}'.");
         }
 
-        if (hasPartial)
+        var extractingMarker = await QuarantineStageMarkerIfPresentAsync(
+            extractingMarkerPath,
+            journal.OperationId,
+            newPlan.State.Destination,
+            newPlan.State.SizeBytes,
+            newPlan.State.Sha256,
+            "extracting");
+        if (extractingMarker is not null)
         {
-            DeleteRegularTemporaryFile(partialPath);
+            quarantines.Add(extractingMarker);
         }
 
-        if (hasStage)
-        {
-            if (hasReadyMarker && !hasExtractingMarker)
-            {
-                await WriteStageMarkerAsync(
-                    extractingMarkerPath,
-                    journal.OperationId,
-                    newPlan.State.Destination,
-                    newPlan.State.SizeBytes,
-                    newPlan.State.Sha256,
-                    "extracting",
-                    CancellationToken.None);
-                hasExtractingMarker = true;
-            }
-
-            if (hasReadyMarker)
-            {
-                await DeleteVerifiedStageMarkerAsync(
-                    readyMarkerPath,
-                    journal.OperationId,
-                    newPlan.State.Destination,
-                    newPlan.State.SizeBytes,
-                    newPlan.State.Sha256,
-                    "ready");
-            }
-
-            await DeleteVerifiedOwnedFileIfPresentAsync(
-                stagePath,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256);
-            if (hasExtractingMarker)
-            {
-                await DeleteVerifiedStageMarkerAsync(
-                    extractingMarkerPath,
-                    journal.OperationId,
-                    newPlan.State.Destination,
-                    newPlan.State.SizeBytes,
-                    newPlan.State.Sha256,
-                    "extracting");
-            }
-
-            return new RollbackStagingEvidence(
-                MayHaveActivatedFinal: false,
-                ReadyMarkerPath: null,
-                DeferredNotActivatedMarkerPath: null);
-        }
-
-        if (hasExtractingMarker)
-        {
-            await DeleteVerifiedStageMarkerAsync(
-                extractingMarkerPath,
-                journal.OperationId,
-                newPlan.State.Destination,
-                newPlan.State.SizeBytes,
-                newPlan.State.Sha256,
-                "extracting");
-            return new RollbackStagingEvidence(
-                MayHaveActivatedFinal: false,
-                ReadyMarkerPath: null,
-                DeferredNotActivatedMarkerPath: null);
-        }
-
-        return new RollbackStagingEvidence(
-            MayHaveActivatedFinal: hasReadyMarker,
-            ReadyMarkerPath: hasReadyMarker ? readyMarkerPath : null,
-            DeferredNotActivatedMarkerPath: null);
-    }
-
-    private static async Task DeleteReadyMarkerAfterRollbackAsync(
-        ManagedUpdateJournal journal,
-        StateFilePlan newPlan,
-        string stagePath,
-        RollbackStagingEvidence evidence)
-    {
-        if (evidence.ReadyMarkerPath is null)
-        {
-            return;
-        }
-
-        if (!string.Equals(
-                evidence.ReadyMarkerPath,
-                GetUpdateReadyMarkerPath(stagePath),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ManagedFilesInstallException("Rollback staging marker path changed unexpectedly.");
-        }
-
-        await DeleteVerifiedStageMarkerAsync(
-            evidence.ReadyMarkerPath,
+        var readyMarker = await QuarantineStageMarkerIfPresentAsync(
+            readyMarkerPath,
             journal.OperationId,
             newPlan.State.Destination,
             newPlan.State.SizeBytes,
             newPlan.State.Sha256,
             "ready");
+        if (readyMarker is not null)
+        {
+            quarantines.Add(readyMarker);
+        }
+
+        var partial = await QuarantineRegularFileIfPresentAsync(
+            partialPath,
+            journal.OperationId,
+            "rollback partial stage");
+        if (partial is not null)
+        {
+            quarantines.Add(partial);
+        }
+
+        var stage = await QuarantineStateFileIfPresentAsync(
+            stagePath,
+            journal.OperationId,
+            newPlan.State,
+            "rollback complete stage");
+        if (stage is not null)
+        {
+            quarantines.Add(stage);
+        }
+
+        return new RollbackStagingEvidence(
+            MayHaveActivatedFinal: hasReadyMarker && !hasStage);
     }
 
     private async Task RollBackUncommittedOperationAsync(ManagedUpdateJournal journal)
@@ -1472,8 +1481,7 @@ public sealed class ManagedFilesInstaller
         var oldByDestination = oldPlans.ToDictionary(
             plan => plan.State.Destination,
             StringComparer.OrdinalIgnoreCase);
-        var deferredNotActivatedMarkers =
-            new List<(StateFilePlan Plan, string Path)>();
+        var quarantines = new List<RecoveryQuarantine>();
 
         foreach (var newPlan in CreateStateFilePlans(journal.NewState).Where(plan =>
                      !retained.Contains(plan.State.Destination)))
@@ -1483,14 +1491,28 @@ public sealed class ManagedFilesInstaller
             var stagingEvidence = await RollBackStagingEvidenceAsync(
                 journal,
                 newPlan,
-                stagePath);
-            if (stagingEvidence.DeferredNotActivatedMarkerPath is { } markerPath)
-            {
-                deferredNotActivatedMarkers.Add((newPlan, markerPath));
-            }
+                stagePath,
+                quarantines);
 
             if (!stagingEvidence.MayHaveActivatedFinal)
             {
+                continue;
+            }
+
+            var finalQuarantinePath = GetRecoveryQuarantinePath(
+                finalPath,
+                journal.OperationId);
+            if (File.Exists(finalQuarantinePath))
+            {
+                var finalQuarantine = await DescribeExistingStateQuarantineAsync(
+                    finalPath,
+                    journal.OperationId,
+                    newPlan.State);
+                if (finalQuarantine is not null)
+                {
+                    quarantines.Add(finalQuarantine);
+                }
+
                 continue;
             }
 
@@ -1513,7 +1535,15 @@ public sealed class ManagedFilesInstaller
                     newPlan.State.Sha256,
                     CancellationToken.None))
             {
-                File.Delete(finalPath);
+                var finalQuarantine = await QuarantineStateFileIfPresentAsync(
+                    finalPath,
+                    journal.OperationId,
+                    newPlan.State,
+                    "rollback activated file");
+                if (finalQuarantine is not null)
+                {
+                    quarantines.Add(finalQuarantine);
+                }
             }
             else if (File.Exists(finalPath) &&
                      (!oldByDestination.TryGetValue(newPlan.State.Destination, out var oldPlan) ||
@@ -1529,11 +1559,6 @@ public sealed class ManagedFilesInstaller
                     $"Rollback refused to remove an unrecognized file at '{finalPath}'.");
             }
 
-            await DeleteReadyMarkerAfterRollbackAsync(
-                journal,
-                newPlan,
-                stagePath,
-                stagingEvidence);
         }
 
         if (oldState is not null)
@@ -1613,23 +1638,15 @@ public sealed class ManagedFilesInstaller
                 CancellationToken.None);
         }
 
-        foreach (var (plan, markerPath) in deferredNotActivatedMarkers)
-        {
-            await DeleteVerifiedStageMarkerAsync(
-                markerPath,
-                journal.OperationId,
-                plan.State.Destination,
-                plan.State.SizeBytes,
-                plan.State.Sha256,
-                "not-activated");
-        }
-
         if (journal.SchemaVersion == 1)
         {
             await ObserveAsync(ManagedInstallerPhase.RollbackCleanupCompleted);
         }
 
+        await VerifyRecoveryQuarantinesAsync(quarantines);
         _journalStore.Delete(journal.EffectiveInstallationKey);
+        await ObserveAsync(ManagedInstallerPhase.RecoveryAuthorityRevoked);
+        await DeleteQuarantinesBestEffortAsync(quarantines);
     }
 
     private static void ValidateOperationPaths(
@@ -1650,7 +1667,10 @@ public sealed class ManagedFilesInstaller
             var originalPath = GetStateFilePath(oldPlan, oldState!.IsEnabled);
             var backupPath = GetUpdateBackupPath(originalPath, operationId);
             EnsurePathIsVacant(backupPath);
-            EnsurePathIsVacant(GetUpdateBackupCleanupPath(backupPath));
+            var cleanupPath = GetUpdateBackupCleanupPath(backupPath);
+            EnsurePathIsVacant(cleanupPath);
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(backupPath, operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(cleanupPath, operationId));
         }
 
         foreach (var newPlan in newPlans.Where(plan =>
@@ -1663,6 +1683,21 @@ public sealed class ManagedFilesInstaller
             EnsurePathIsVacant(GetUpdatePartialPath(stagePath));
             EnsurePathIsVacant(GetUpdateExtractingMarkerPath(stagePath));
             EnsurePathIsVacant(GetUpdateReadyMarkerPath(stagePath));
+            EnsurePathIsVacant(GetUpdateNotActivatedMarkerPath(stagePath));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(finalPath, operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(stagePath, operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(
+                GetUpdatePartialPath(stagePath),
+                operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(
+                GetUpdateExtractingMarkerPath(stagePath),
+                operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(
+                GetUpdateReadyMarkerPath(stagePath),
+                operationId));
+            EnsurePathIsVacant(GetRecoveryQuarantinePath(
+                GetUpdateNotActivatedMarkerPath(stagePath),
+                operationId));
             if (oldByDestination.TryGetValue(
                     newPlan.PackageFile.DestinationRelativePath,
                     out var oldPlan))
@@ -1757,34 +1792,221 @@ public sealed class ManagedFilesInstaller
         }
     }
 
-    private static async Task DeleteVerifiedOwnedFileIfPresentAsync(
+    private async Task<RecoveryQuarantine?> QuarantineVerifiedFileIfPresentAsync(
         string path,
-        long expectedSize,
-        string expectedSha256)
+        string operationId,
+        Func<string, Task> verifyAsync,
+        string evidenceDescription)
     {
-        if (Directory.Exists(path))
+        var quarantinePath = GetRecoveryQuarantinePath(path, operationId);
+        EnsureMutationPathsAreRegularOrAbsent(quarantinePath);
+        var hasQuarantine = File.Exists(quarantinePath);
+        if (hasQuarantine)
         {
-            throw new ManagedFilesInstallException(
-                $"Hub-owned temporary path '{path}' is occupied by a directory.");
+            if (File.Exists(path) || Directory.Exists(path))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Recovery found ambiguous source and quarantine for {evidenceDescription} at '{path}'.");
+            }
+
+            await verifyAsync(quarantinePath);
+            return await DescribeRecoveryQuarantineAsync(quarantinePath);
         }
 
+        EnsureMutationPathsAreRegularOrAbsent(path);
         if (!File.Exists(path))
         {
-            return;
+            return null;
         }
 
-        if (!IsRegularFile(path) ||
-            !await MatchesAsync(
-                path,
-                expectedSize,
-                expectedSha256,
-                CancellationToken.None))
+        await verifyAsync(path);
+        File.Move(path, quarantinePath);
+        try
+        {
+            await verifyAsync(quarantinePath);
+        }
+        catch
+        {
+            TryRestoreQuarantinedFile(quarantinePath, path);
+            throw;
+        }
+
+        var receipt = await DescribeRecoveryQuarantineAsync(quarantinePath);
+        await ObserveAsync(ManagedInstallerPhase.FileQuarantined);
+        await VerifyRecoveryQuarantineAsync(receipt, failClosed: true);
+        return receipt;
+    }
+
+    private async Task<RecoveryQuarantine?> QuarantineStateFileIfPresentAsync(
+        string path,
+        string operationId,
+        InstalledFileState expected,
+        string evidenceDescription) =>
+        await QuarantineVerifiedFileIfPresentAsync(
+            path,
+            operationId,
+            candidate => VerifyMutationFileAsync(candidate, expected),
+            evidenceDescription);
+
+    private async Task<RecoveryQuarantine?> QuarantineStageMarkerIfPresentAsync(
+        string path,
+        string operationId,
+        string destination,
+        long sizeBytes,
+        string sha256,
+        string phase) =>
+        await QuarantineVerifiedFileIfPresentAsync(
+            path,
+            operationId,
+            candidate => VerifyStageMarkerAsync(
+                candidate,
+                operationId,
+                destination,
+                sizeBytes,
+                sha256,
+                phase),
+            $"{phase} staging marker");
+
+    private async Task<RecoveryQuarantine?> QuarantineRegularFileIfPresentAsync(
+        string path,
+        string operationId,
+        string evidenceDescription) =>
+        await QuarantineVerifiedFileIfPresentAsync(
+            path,
+            operationId,
+            candidate => VerifyRegularTemporaryFileAsync(candidate, evidenceDescription),
+            evidenceDescription);
+
+    private static Task VerifyRegularTemporaryFileAsync(
+        string path,
+        string evidenceDescription)
+    {
+        EnsureTemporaryPathIsNotDirectory(path);
+        if (!IsRegularFile(path))
         {
             throw new ManagedFilesInstallException(
-                $"Hub-owned temporary file '{path}' was changed outside NFG Hub.");
+                $"Recovery found unrecognized {evidenceDescription} at '{path}'.");
         }
 
-        File.Delete(path);
+        return Task.CompletedTask;
+    }
+
+    private static void TryRestoreQuarantinedFile(string quarantinePath, string sourcePath)
+    {
+        try
+        {
+            if (File.Exists(quarantinePath) &&
+                !File.Exists(sourcePath) &&
+                !Directory.Exists(sourcePath))
+            {
+                File.Move(quarantinePath, sourcePath);
+            }
+        }
+        catch (IOException)
+        {
+            // Preserve both paths as evidence when the reversible restore cannot complete.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Preserve both paths as evidence when the reversible restore cannot complete.
+        }
+    }
+
+    private static async Task<RecoveryQuarantine> DescribeRecoveryQuarantineAsync(
+        string path)
+    {
+        if (!IsRegularFile(path))
+        {
+            throw new ManagedFilesInstallException(
+                $"Recovery quarantine '{path}' is missing or unrecognized.");
+        }
+
+        var length = new FileInfo(path).Length;
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var digest = await SHA256.HashDataAsync(stream, CancellationToken.None);
+        return new RecoveryQuarantine(path, length, Convert.ToHexString(digest));
+    }
+
+    private static async Task<RecoveryQuarantine?> DescribeExistingStateQuarantineAsync(
+        string sourcePath,
+        string operationId,
+        InstalledFileState expected)
+    {
+        var quarantinePath = GetRecoveryQuarantinePath(sourcePath, operationId);
+        EnsureMutationPathsAreRegularOrAbsent(quarantinePath);
+        if (!File.Exists(quarantinePath))
+        {
+            return null;
+        }
+
+        await VerifyMutationFileAsync(quarantinePath, expected);
+        return await DescribeRecoveryQuarantineAsync(quarantinePath);
+    }
+
+    private static async Task VerifyRecoveryQuarantinesAsync(
+        IEnumerable<RecoveryQuarantine> quarantines)
+    {
+        foreach (var quarantine in quarantines
+                     .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.First()))
+        {
+            await VerifyRecoveryQuarantineAsync(quarantine, failClosed: true);
+        }
+    }
+
+    private static async Task<bool> VerifyRecoveryQuarantineAsync(
+        RecoveryQuarantine quarantine,
+        bool failClosed)
+    {
+        var valid = IsRegularFile(quarantine.Path) &&
+                    await MatchesAsync(
+                        quarantine.Path,
+                        quarantine.SizeBytes,
+                        quarantine.Sha256,
+                        CancellationToken.None);
+        if (!valid && failClosed)
+        {
+            throw new ManagedFilesInstallException(
+                $"Recovery quarantine '{quarantine.Path}' changed before authority revocation.");
+        }
+
+        return valid;
+    }
+
+    private async Task DeleteQuarantinesBestEffortAsync(
+        IEnumerable<RecoveryQuarantine> quarantinePaths)
+    {
+        // Stable cross-process file identity is unavailable here. Every receipt is
+        // revalidated before authority revocation; the journal is then removed before
+        // any irreversible delete. Missing or changed post-revoke paths are preserved,
+        // and a crash during best-effort cleanup may intentionally leave orphan evidence.
+        foreach (var path in quarantinePaths
+                     .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.First()))
+        {
+            try
+            {
+                if (await VerifyRecoveryQuarantineAsync(path, failClosed: false))
+                {
+                    File.Delete(path.Path);
+                    await ObserveAsync(ManagedInstallerPhase.FileCleanupCompleted);
+                }
+            }
+            catch (IOException)
+            {
+                // Terminal authority has been revoked. Preserve residual evidence.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Terminal authority has been revoked. Preserve residual evidence.
+            }
+        }
     }
 
     private static async Task WriteStageMarkerAsync(
@@ -1842,7 +2064,7 @@ public sealed class ManagedFilesInstaller
         }
     }
 
-    private static async Task DeleteVerifiedStageMarkerAsync(
+    private static async Task DeleteForwardExtractingMarkerAsync(
         string path,
         string operationId,
         string destination,
@@ -1876,35 +2098,6 @@ public sealed class ManagedFilesInstaller
             sha256.ToLowerInvariant(),
             phase);
         return SHA256.HashData(Encoding.UTF8.GetBytes(descriptor));
-    }
-
-    private static bool DeleteLegacyStageFileIfPresent(string path)
-    {
-        EnsureTemporaryPathIsNotDirectory(path);
-        if (!File.Exists(path))
-        {
-            return false;
-        }
-
-        DeleteRegularTemporaryFile(path);
-        return true;
-    }
-
-    private static void DeleteRegularTemporaryFile(string path)
-    {
-        EnsureTemporaryPathIsNotDirectory(path);
-        if (!File.Exists(path))
-        {
-            return;
-        }
-
-        if (!IsRegularFile(path))
-        {
-            throw new ManagedFilesInstallException(
-                $"Hub-owned temporary file '{path}' is a reparse point.");
-        }
-
-        File.Delete(path);
     }
 
     private static void EnsureTemporaryPathIsNotDirectory(string path)
@@ -2211,6 +2404,9 @@ public sealed class ManagedFilesInstaller
     private static string GetUpdateBackupCleanupPath(string backupPath) =>
         $"{backupPath}.cleanup";
 
+    private static string GetRecoveryQuarantinePath(string path, string operationId) =>
+        $"{path}.nfg-terminal-{operationId}.quarantine";
+
     private static string GetRemovalTombstonePath(string sourcePath, string operationId) =>
         $"{sourcePath}.nfg-remove-{operationId}.disabled";
 
@@ -2372,10 +2568,12 @@ public sealed class ManagedFilesInstaller
         public string? ExistingPath { get; set; }
     }
 
-    private sealed record RollbackStagingEvidence(
-        bool MayHaveActivatedFinal,
-        string? ReadyMarkerPath,
-        string? DeferredNotActivatedMarkerPath);
+    private sealed record RollbackStagingEvidence(bool MayHaveActivatedFinal);
+
+    private sealed record RecoveryQuarantine(
+        string Path,
+        long SizeBytes,
+        string Sha256);
 }
 
 internal enum ManagedInstallerPhase
@@ -2388,7 +2586,9 @@ internal enum ManagedInstallerPhase
     StateCommitted,
     CleanupPrepared,
     FileCleanupCompleted,
-    RollbackCleanupCompleted
+    RollbackCleanupCompleted,
+    FileQuarantined,
+    RecoveryAuthorityRevoked
 }
 
 internal sealed class ManagedInstallerInterruptionException(string message)
