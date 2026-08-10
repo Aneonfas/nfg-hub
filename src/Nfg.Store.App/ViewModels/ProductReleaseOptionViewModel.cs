@@ -1,10 +1,13 @@
 using Nfg.Store.Contracts;
 using Nfg.Store.Core;
+using Nfg.Store.App.Infrastructure;
 
 namespace Nfg.Store.App.ViewModels;
 
-public sealed class ProductReleaseOptionViewModel
+public sealed class ProductReleaseOptionViewModel : LocalizedObservableObject
 {
+    private readonly string? _detectedGameBuildId;
+    private readonly string? _testedGameBuildLabel;
     public ProductReleaseOptionViewModel(
         ProductManifest product,
         ProductRelease release,
@@ -23,26 +26,19 @@ public sealed class ProductReleaseOptionViewModel
         IsRecommended = isRecommended && IsExactlyCompatible;
 
         var testedGameVersion = ProductReleaseCatalog.GetEffectiveGameVersion(product, release);
-        TestedGameBuildLabel = FormatGameBuild(testedGameVersion);
-        DetectedGameBuildLabel = string.IsNullOrWhiteSpace(detectedGameBuildId)
-            ? "не определена"
-            : detectedGameBuildId;
-        CompatibilityLabel = CreateCompatibilityLabel(
-            IsExactlyCompatible,
-            TestedGameBuildLabel,
-            detectedGameBuildId);
-        DisplayLabel = IsRecommended
-            ? $"{Version} — рекомендуется"
-            : IsAutomaticChoice
-                ? $"{Version} — последняя доступная"
-                : Version;
+        _testedGameBuildLabel = FormatGameBuild(testedGameVersion);
+        _detectedGameBuildId = detectedGameBuildId;
     }
 
     public ProductRelease Release { get; }
 
     public string Version { get; }
 
-    public string DisplayLabel { get; }
+    public string DisplayLabel => IsRecommended
+        ? Text.Format("Release.Recommended", Version)
+        : IsAutomaticChoice
+            ? Text.Format("Release.Latest", Version)
+            : Version;
 
     public string ChannelLabel { get; }
 
@@ -54,13 +50,18 @@ public sealed class ProductReleaseOptionViewModel
 
     public bool IsExactlyCompatible { get; }
 
-    public string? TestedGameBuildLabel { get; }
+    public string? TestedGameBuildLabel => _testedGameBuildLabel;
 
-    public string DetectedGameBuildLabel { get; }
+    public string DetectedGameBuildLabel => string.IsNullOrWhiteSpace(_detectedGameBuildId)
+        ? Text.Get("Release.GameBuildUnknown")
+        : _detectedGameBuildId;
 
-    public string CompatibilityLabel { get; }
+    public string CompatibilityLabel => CreateCompatibilityLabel(
+        IsExactlyCompatible,
+        TestedGameBuildLabel,
+        _detectedGameBuildId);
 
-    public string ReleaseChangesTitle => $"Что нового в {Version}";
+    public string ReleaseChangesTitle => Text.Format("Product.WhatsNew", Version);
 
     public IReadOnlyList<string> ReleaseHighlights => Release.Highlights;
 
@@ -95,18 +96,18 @@ public sealed class ProductReleaseOptionViewModel
     {
         if (isExactlyCompatible)
         {
-            return $"Проверено для вашей сборки ({detectedGameBuild})";
+            return Text.Format("Release.Exact", detectedGameBuild);
         }
 
         if (string.IsNullOrWhiteSpace(detectedGameBuild))
         {
             return testedGameBuild is null
-                ? "Версия игры не определена"
-                : $"Проверено на сборке {testedGameBuild}";
+                ? Text.Get("Release.GameUnknown")
+                : Text.Format("Release.Tested", testedGameBuild);
         }
 
         return testedGameBuild is null
-            ? $"Не проверено на вашей сборке ({detectedGameBuild})"
-            : $"Проверено на {testedGameBuild}; у вас {detectedGameBuild}";
+            ? Text.Format("Release.Unverified", detectedGameBuild)
+            : Text.Format("Release.Mismatch", testedGameBuild, detectedGameBuild);
     }
 }

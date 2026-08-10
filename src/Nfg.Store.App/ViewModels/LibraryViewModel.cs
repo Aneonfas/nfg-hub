@@ -13,7 +13,7 @@ public sealed class LibraryViewModel : PageViewModel
     public LibraryViewModel(
         IReadOnlyList<ProductStateViewModel> productStates,
         Action<ProductStateViewModel> openProduct)
-        : base("Библиотека")
+        : base("Nav.Library", localizeTitle: true)
     {
         ArgumentNullException.ThrowIfNull(productStates);
         ArgumentNullException.ThrowIfNull(openProduct);

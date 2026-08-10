@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "nfg.anvil-empires.ru",
+  "type": "localization",
+  "familyId": "nfg.anvil-empires.localization",
+  "locale": "ru",
+  "exclusiveGroup": "nfg.anvil-empires.ru",
+  "display": {
+    "title": "Anvil Empires",
+    "subtitle": "Русская локализация",
+    "summary": "Русский перевод интерфейса, предметов и игровых систем.",
+    "description": "Неофициальный русский перевод Anvil Empires Pre-Alpha для Windows и Steam. Локализация охватывает основные игровые тексты и адаптирует шрифт для корректного отображения кириллицы.",
+    "features": [
+      "2 985 записей локализации",
+      "Интерфейс, предметы, сооружения, производство, задания и системные сообщения",
+      "Кириллическая замена шрифта"
+    ]
+  },
+  "release": {
+    "version": "1.0.1",
+    "channel": "stable",
+    "gameVersion": "steam-build-24619810",
+    "publishedAt": "2026-08-09T09:25:26Z",
+    "highlights": [
+      "Добавлена поддержка версии игры 90114 (Steam build 24619810)",
+      "Переведены новые строки заданий, сбора ресурсов, аренды хранилищ, ремонта, обучения, игровых уведомлений и диалога присяги",
+      "Исправлены оборванное сообщение о расстоянии, переполнение окна ремонта и несколько неточных формулировок"
+    ],
+    "knownIssues": [
+      "Серверные сообщения могут оставаться на английском",
+      "Текст внутри изображений не переводится",
+      "Некоторые raw-строки голосового чата и редкие игровые ветви могут оставаться английскими"
+    ],
+    "notesUrl": "https://github.com/nullith2/anvil-empires-russian/releases/tag/v1.0.1",
+    "payload": {
+      "url": "https://github.com/nullith2/anvil-empires-russian/releases/download/v1.0.1/Anvil-Empires-Russian-v1.0.1-steam-build-24619810.zip",
+      "sizeBytes": 485032,
+      "sha256": "29488b171cc6baaae928f204f550415d08fa811ad7af736b6e36de7c3e433dca"
+    }
+  },
+  "releases": [
+    {
+      "version": "1.0.0",
+      "channel": "stable",
+      "gameVersion": "steam-build-24378492",
+      "publishedAt": "2026-08-01T23:38:41Z",
+      "highlights": [
+        "Добавлена поддержка версии игры 89454 (Steam build 24378492)"
+      ],
+      "knownIssues": [
+        "Серверные сообщения могут оставаться на английском",
+        "Текст внутри изображений не переводится"
+      ],
+      "notesUrl": "https://github.com/nullith2/anvil-empires-russian/releases/tag/v1.0.0",
+      "payload": {
+        "url": "https://github.com/nullith2/anvil-empires-russian/releases/download/v1.0.0/Anvil-Empires-Russian-v1.0.0-steam-build-24378492.zip",
+        "sizeBytes": 478013,
+        "sha256": "a316fbdc1520794940f8a0906bbd5c346098e014fcfca02544c49b84d03c2f73"
+      }
+    }
+  ],
+  "compatibility": {
+    "platforms": ["windows-x64"],
+    "gameVersion": "steam-build-24619810",
+    "status": "compatible"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": null,
+    "label": "Стабильная"
+  }
+}

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Nfg.Store.Contracts;
 
 public sealed record ProductManifest
@@ -7,6 +9,27 @@ public sealed record ProductManifest
     public required string Id { get; init; }
 
     public required string Type { get; init; }
+
+    /// <summary>
+    /// Stable product family used to group localized variants in the Hub.
+    /// Required for schema-v2 localization products.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FamilyId { get; init; }
+
+    /// <summary>
+    /// BCP-47 language tag of this product variant.
+    /// Required for schema-v2 localization products.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Locale { get; init; }
+
+    /// <summary>
+    /// Stable mutually-exclusive installation slot shared by product variants.
+    /// Required for schema-v2 localization products.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ExclusiveGroup { get; init; }
 
     public required ProductDisplay Display { get; init; }
 

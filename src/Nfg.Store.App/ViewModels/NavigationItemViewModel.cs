@@ -3,13 +3,13 @@ using Nfg.Store.App.Infrastructure;
 namespace Nfg.Store.App.ViewModels;
 
 public sealed class NavigationItemViewModel(
-    string label,
+    string labelKey,
     string glyph,
-    PageViewModel page) : ObservableObject
+    PageViewModel page) : LocalizedObservableObject
 {
     private bool _isSelected;
 
-    public string Label { get; } = label;
+    public string Label => Text.Get(labelKey);
 
     public string Glyph { get; } = glyph;
 

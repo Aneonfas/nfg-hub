@@ -1,7 +1,7 @@
 # NFG Hub
 
 NFG Hub is a lightweight Windows catalog, installer, and library for NFG products.
-The first planned product is the Russian localization for Anvil Empires.
+Hub 0.2.0 adds Russian and Spanish Anvil Empires localization variants.
 
 The current repository contains a working Windows Hub shell and versioned catalog/package contracts. The app loads the official catalog over HTTPS, keeps a validated local cache, downloads ZIP-only packages, detects Steam installations, and applies declared managed files without launching external installers.
 
@@ -36,7 +36,9 @@ See [docs/releasing.md](docs/releasing.md) for the release policy and commands.
 - `src/Nfg.Store.Contracts` — product and catalog manifest contracts.
 - `src/Nfg.Store.Installation` — hash-guarded managed-file installation, activation state, and removal.
 - `src/Nfg.Store.Platform.Windows` — Windows registry, Steam library, and app-manifest discovery.
-- `catalog` — bundled fallback catalog copied into the application output.
+- `catalog-v2` — pinned bundled fallback used by Hub 0.2.0.
+- `catalog-v2.snapshot.json` — authoritative commit and SHA-256 lock for that snapshot.
+- `catalog` and `catalog.snapshot.json` — retained legacy snapshot for Hub 0.1.1.
 - `docs/architecture.md` — current boundaries and installation lifecycle.
 
 ## Current installation scope
@@ -45,4 +47,12 @@ The Hub supports first installation, idempotent reinstall, adoption of an alread
 
 For the detected game build, the Hub recommends the newest exact match. If no release was verified against that build, it recommends the newest published release with a warning and still lets the user install it. The user can also choose any published version manually. Upgrades and downgrades use the same staged, hash-checked transaction, preserve the enabled state, and use a persisted journal to roll back an uncommitted change or finish cleanup after a committed change. Installation state records the Steam BuildID detected when the version was applied. Disabling preserves the verified file under a non-loadable `.nfg-disabled` name. Unknown files are never overwritten.
 
-All product mutations use a per-product cross-process lock, so two Hub windows cannot modify the same installation concurrently.
+All product mutations use a per-installation-slot cross-process lock, so two Hub windows cannot modify the same game slot concurrently.
+
+The public catalog is authored in
+[`Aneonfas/nfg-hub-catalog`](https://github.com/Aneonfas/nfg-hub-catalog).
+Bundled files are synchronized from a committed state of that repository with
+`scripts/catalog-snapshot.ps1`; `scripts/verify.ps1` rejects manual drift from
+the pinned commit and hashes. The public root catalog remains the Product
+Manifest schema-v1 feed for Hub 0.1.1. Hub 0.2.0 uses the separate
+`/v2/catalog.json` feed and `catalog-v2` cache/bundle namespace.

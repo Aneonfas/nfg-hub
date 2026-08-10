@@ -1,39 +1,129 @@
 using System.IO.Compression;
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nfg.Store.App.Services;
+using Nfg.Store.App.Localization;
 using Nfg.Store.App.ViewModels;
 using Nfg.Store.Contracts;
 using Nfg.Store.Core;
 using Nfg.Store.Installation;
 using Nfg.Store.Platform.Windows;
 
-var catalogUri = new Uri("https://catalog.test/catalog.json");
-var bundledRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
+LocalizationService.Instance.SetLanguage("ru");
+
+if (args.Length > 0)
+{
+    if (args is ["--validate-catalog", var catalogRoot])
+    {
+        await new CatalogService().LoadAsync(catalogRoot);
+        Console.WriteLine($"Catalog '{Path.GetFullPath(catalogRoot)}' is valid.");
+        return;
+    }
+
+    if (args is
+        [
+            "--hold-installation-lock",
+            var lockDataRoot,
+            var lockInstallationKey,
+            var lockReadyPath,
+            var lockReleasePath
+        ])
+    {
+        await ManagedStateMutationSmoke.HoldInstallationLockAsync(
+            lockDataRoot,
+            lockInstallationKey,
+            lockReadyPath,
+            lockReleasePath);
+        return;
+    }
+
+    if (args is ["--managed-state-mutation"])
+    {
+        var focusedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "nfg-store-mutation-smoke",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(focusedRoot);
+            await ManagedStateMutationSmoke.RunAsync(focusedRoot);
+            Console.WriteLine("NFG Hub managed-state mutation smoke checks passed.");
+        }
+        finally
+        {
+            if (Directory.Exists(focusedRoot))
+            {
+                Directory.Delete(focusedRoot, recursive: true);
+            }
+        }
+
+        return;
+    }
+
+    if (args is ["--product-family-view-model"])
+    {
+        var focusedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "nfg-store-family-vm-smoke",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(focusedRoot);
+            await ProductFamilyViewModelSmoke.RunAsync(focusedRoot);
+            Console.WriteLine("NFG Hub product-family view-model smoke checks passed.");
+        }
+        finally
+        {
+            if (Directory.Exists(focusedRoot))
+            {
+                Directory.Delete(focusedRoot, recursive: true);
+            }
+        }
+
+        return;
+    }
+
+    throw new ArgumentException(
+        "Usage: Nfg.Store.Core.Smoke " +
+        "[--validate-catalog <catalog-root> | --product-family-view-model | " +
+        "--managed-state-mutation]");
+}
+
+var catalogUri = new Uri("https://catalog.test/v2/catalog.json");
+var bundledRoot = Path.Combine(AppContext.BaseDirectory, "catalog-v2");
 var testRoot = Path.Combine(
     Path.GetTempPath(),
     "nfg-store-smoke",
     Guid.NewGuid().ToString("N"));
-var cacheRoot = Path.Combine(testRoot, "cache");
-var emptyCacheRoot = Path.Combine(testRoot, "empty-cache");
+var cacheRoot = Path.Combine(testRoot, "cache", "catalog-v2");
+var emptyCacheRoot = Path.Combine(testRoot, "empty-cache", "catalog-v2");
 
 try
 {
     Directory.CreateDirectory(testRoot);
     await CheckSemanticVersionContractAsync();
+    CheckLocalization();
     CheckMultiReleaseSelection();
     CheckRefreshGameCompatibility();
     CheckDetectionWithoutSingleSteamAppId();
     await CheckMultipleSteamInstallationsUseExactBuildAsync();
     CheckFallbackReleasePresentation();
     CheckProductUpdatePresentation();
+    await ProductFamilyViewModelSmoke.RunAsync(testRoot);
     CheckAppSettingsPersistence();
     CheckAppDataMigration();
     await CheckCatalogSourcesAsync();
     await CheckRichCatalogValidationAsync();
+    await CheckProductSchemaV2ValidationAsync();
+    await InstallationStateV2Smoke.RunAsync(testRoot);
+    await ManagedUpdateJournalV2Smoke.RunAsync(testRoot);
+    await ManagedVariantInstallerSmoke.RunAsync(testRoot);
+    await ManagedStateMutationSmoke.RunAsync(testRoot);
+    CheckInstallationCatalogRequirementUnion();
     await CheckProductLibraryStoreAsync();
     await CheckPackageDownloadAndValidationAsync();
     await CheckManagedUpdateAsync();
@@ -47,6 +137,49 @@ finally
     {
         Directory.Delete(testRoot, recursive: true);
     }
+}
+
+void CheckInstallationCatalogRequirementUnion()
+{
+    var prototype = new InstalledProductState
+    {
+        SchemaVersion = 2,
+        InstallationKey = "nfg.anvil-empires.ru",
+        ProductId = "nfg.anvil-empires.es",
+        Version = "1.0.0",
+        PackageSizeBytes = 1,
+        PackageSha256 = new string('a', 64),
+        SteamAppId = "2383950",
+        SteamBuildId = "24619810",
+        GameRoot = Path.Combine(testRoot, "required-products-game"),
+        InstalledAt = DateTimeOffset.UnixEpoch,
+        Files =
+        [
+            new InstalledFileState
+            {
+                Destination = "Anvil/Content/Paks/test.pak",
+                SizeBytes = 1,
+                Sha256 = new string('b', 64)
+            }
+        ]
+    };
+    var required = InstallationCatalogRequirements.UnionProductIds(
+        ["nfg.anvil-empires.ru"],
+        [
+            prototype,
+            prototype with
+            {
+                InstallationKey = "nfg.anvil-empires.forge-helper",
+                ProductId = "nfg.anvil-empires.forge-helper"
+            }
+        ]);
+
+    Assert(
+        required.Count == 3 &&
+        required.Contains("nfg.anvil-empires.ru") &&
+        required.Contains("nfg.anvil-empires.es") &&
+        required.Contains("nfg.anvil-empires.forge-helper"),
+        "Startup catalog requirements did not union library and installed product ids.");
 }
 
 async Task CheckSemanticVersionContractAsync()
@@ -447,25 +580,81 @@ void CheckProductUpdatePresentation()
         "Manual selection should retain release-specific compatibility information.");
 }
 
+void CheckLocalization()
+{
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("ru-RU")) == "ru",
+        "Russian system culture was not detected.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("es-MX")) == "es",
+        "Spanish regional culture was not detected.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("de-DE")) == "en",
+        "Unsupported system culture should fall back to English.");
+
+    var product = new ProductViewModel(CreateProduct(1, new string('a', 64)));
+    var languageRefreshes = 0;
+    product.PropertyChanged += (_, eventArgs) =>
+    {
+        if (string.IsNullOrEmpty(eventArgs.PropertyName))
+        {
+            languageRefreshes++;
+        }
+    };
+
+    LocalizationService.Instance.SetLanguage("en");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Catalog",
+        "English UI resources were not selected.");
+    Assert(product.TypeLabel == "Localization",
+        "An existing view model did not expose English text.");
+    LocalizationService.Instance.SetLanguage("es");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Catálogo",
+        "Spanish UI resources were not selected.");
+    Assert(product.TypeLabel == "Localización",
+        "An existing view model did not refresh to Spanish.");
+    LocalizationService.Instance.SetLanguage("ru");
+    Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Каталог",
+        "Russian UI resources were not selected.");
+    Assert(product.TypeLabel == "Локализация" && languageRefreshes == 3,
+        "Live UI language changes were not broadcast to existing view models.");
+}
+
 void CheckAppSettingsPersistence()
 {
     var settingsRoot = Path.Combine(testRoot, "app-settings");
     var store = new AppSettingsStore(settingsRoot);
+    var defaultSettings = store.Load();
     Assert(
-        store.Load().CheckUpdatesAutomatically,
+        defaultSettings.CheckUpdatesAutomatically,
         "Automatic catalog checks should default to enabled.");
+    Assert(defaultSettings.UiLanguage is null,
+        "A clean install should defer to the system UI language.");
 
-    store.Save(new AppSettings { CheckUpdatesAutomatically = false });
+    store.Save(new AppSettings
+    {
+        CheckUpdatesAutomatically = false,
+        UiLanguage = "es"
+    });
+    var persistedSettings = new AppSettingsStore(settingsRoot).Load();
     Assert(
-        !new AppSettingsStore(settingsRoot).Load().CheckUpdatesAutomatically,
+        !persistedSettings.CheckUpdatesAutomatically,
         "The automatic catalog check setting was not persisted.");
+    Assert(persistedSettings.UiLanguage == "es",
+        "The selected UI language was not persisted.");
+
+    var legacyRoot = Path.Combine(testRoot, "app-settings-legacy");
+    var legacyStore = new AppSettingsStore(legacyRoot);
+    Directory.CreateDirectory(Path.GetDirectoryName(legacyStore.SettingsPath)!);
+    File.WriteAllText(
+        legacyStore.SettingsPath,
+        """{ "schemaVersion": 1, "checkUpdatesAutomatically": true }""");
+    Assert(legacyStore.Load().UiLanguage is null,
+        "Settings written before UI localization should remain loadable.");
 
     foreach (var (caseName, invalidJson) in new[]
              {
                  ("malformed", "{"),
                  ("unsupported-schema", """{ "schemaVersion": 2, "checkUpdatesAutomatically": true }"""),
                  ("missing-schema", """{ "checkUpdatesAutomatically": true }"""),
-                 ("missing-setting", """{ "schemaVersion": 1 }""")
+                 ("missing-setting", """{ "schemaVersion": 1 }"""),
+                 ("unsupported-language", """{ "schemaVersion": 1, "checkUpdatesAutomatically": true, "uiLanguage": "fr" }""")
              })
     {
         var invalidRoot = Path.Combine(testRoot, "app-settings-invalid", caseName);
@@ -557,7 +746,17 @@ async Task CheckCatalogSourcesAsync()
     Assert(remoteResult.Source == CatalogSourceKind.Remote, "Expected remote catalog source.");
     var product = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.ru");
-    Assert(product.Release.Version == "1.0.0", "Unexpected product version.");
+    Assert(product.SchemaVersion == 2, "Russian localization should use product schema v2.");
+    Assert(product.FamilyId == "nfg.anvil-empires.localization",
+        "Russian localization has an unexpected familyId.");
+    Assert(product.Locale == "ru", "Russian localization has an unexpected locale.");
+    Assert(product.ExclusiveGroup == "nfg.anvil-empires.ru",
+        "Russian localization has an unexpected installation slot.");
+    Assert(product.Release.Version == "1.0.1", "Unexpected current localization version.");
+    Assert(product.Release.GameVersion == "steam-build-24619810",
+        "Current localization targets an unexpected game build.");
+    Assert(product.Releases.Count == 1 && product.Releases[0].Version == "1.0.0",
+        "Historical localization v1.0.0 was not loaded.");
     Assert(product.Display.Features.Count > 0, "Product features were not loaded.");
     Assert(product.Release.Highlights.Count > 0, "Release highlights were not loaded.");
     Assert(product.Release.KnownIssues.Count > 0, "Known issues were not loaded.");
@@ -570,8 +769,22 @@ async Task CheckCatalogSourcesAsync()
         File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.ru.json")),
         "Product manifest was not cached.");
 
+    var spanish = remoteResult.Catalog.Products.Single(candidate =>
+        candidate.Id == "nfg.anvil-empires.es");
+    Assert(spanish.SchemaVersion == 2, "Spanish localization should use product schema v2.");
+    Assert(spanish.FamilyId == product.FamilyId,
+        "Russian and Spanish localizations should share a family.");
+    Assert(spanish.Locale == "es", "Spanish localization has an unexpected locale.");
+    Assert(spanish.ExclusiveGroup == product.ExclusiveGroup,
+        "Russian and Spanish localizations should share one installation slot.");
+    Assert(spanish.Release.Version == "0.1.0", "Unexpected Spanish localization version.");
+    Assert(
+        File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.es.json")),
+        "Spanish manifest was not cached.");
+
     var forgeHelper = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.forge-helper");
+    Assert(forgeHelper.SchemaVersion == 1, "Forge Helper should remain on product schema v1.");
     Assert(forgeHelper.Type == "mod", "Forge Helper was not loaded as a modification.");
     Assert(
         forgeHelper.Release.Version == "1.0.0",
@@ -706,6 +919,352 @@ async Task CheckRichCatalogValidationAsync()
         "A structurally null required product object should be rejected as catalog validation.");
 }
 
+async Task CheckProductSchemaV2ValidationAsync()
+{
+    var legacyProduct = CreateProduct(1, new string('a', 64));
+    var serializedLegacyProduct = JsonNode.Parse(SerializeProduct(legacyProduct))?.AsObject()
+        ?? throw new InvalidOperationException("Could not construct schema-v1 product JSON.");
+    Assert(!serializedLegacyProduct.ContainsKey("familyId"),
+        "Schema-v1 serialization should omit familyId.");
+    Assert(!serializedLegacyProduct.ContainsKey("locale"),
+        "Schema-v1 serialization should omit locale.");
+    Assert(!serializedLegacyProduct.ContainsKey("exclusiveGroup"),
+        "Schema-v1 serialization should omit exclusiveGroup.");
+
+    var legacyCatalog = await LoadCatalogProductsCaseAsync("schema-v1-compatible", legacyProduct);
+    var loadedLegacyProduct = legacyCatalog.Products.Single();
+    Assert(loadedLegacyProduct.FamilyId is null, "Schema-v1 familyId should default to null.");
+    Assert(loadedLegacyProduct.Locale is null, "Schema-v1 locale should default to null.");
+    Assert(loadedLegacyProduct.ExclusiveGroup is null,
+        "Schema-v1 exclusiveGroup should default to null.");
+    await LoadCatalogProductsCaseAsync(
+        "schema-v1-uppercase-id-compatible",
+        legacyProduct with { Id = "Nfg.Test.Localization" });
+    var legacyLooseIdentifiers = legacyProduct with
+    {
+        Id = "nfg.test_legacy.localization",
+        Dependencies =
+        [
+            new ProductDependency
+            {
+                ProductId = "Legacy_Dependency",
+                VersionRange = "*"
+            }
+        ]
+    };
+    var legacyLooseCatalog = await LoadCatalogJsonCaseAsync(
+        "schema-v1-legacy-identifiers-compatible",
+        [SerializeProduct(legacyLooseIdentifiers)],
+        catalogId: "Legacy_Catalog");
+    var loadedLegacyLooseProduct = legacyLooseCatalog.Products.Single();
+    Assert(loadedLegacyLooseProduct.Id == legacyLooseIdentifiers.Id,
+        "Schema-v1 product ids accepted by the legacy contract must remain valid.");
+    Assert(loadedLegacyLooseProduct.Dependencies.Single().ProductId == "Legacy_Dependency",
+        "Schema-v1 dependency ids accepted by the legacy contract must remain valid.");
+
+    var russian = CreateVariantProduct("nfg.test.localization.ru", "ru");
+    var legacyModification = legacyProduct with
+    {
+        Id = "nfg.test.mod",
+        Type = "mod"
+    };
+    var mixedCatalog = await LoadCatalogProductsCaseAsync(
+        "schema-v2-mixed-with-v1",
+        russian,
+        legacyModification);
+    var loadedRussian = mixedCatalog.Products.Single(product => product.Id == russian.Id);
+    Assert(loadedRussian.SchemaVersion == 2, "Schema-v2 product version was not retained.");
+    Assert(loadedRussian.FamilyId == "nfg.test.localization", "Schema-v2 familyId was not loaded.");
+    Assert(loadedRussian.Locale == "ru", "Schema-v2 locale was not loaded.");
+    Assert(loadedRussian.ExclusiveGroup == "nfg.test.game-language",
+        "Schema-v2 exclusiveGroup was not loaded.");
+
+    var schemaV2Modification = legacyModification with { SchemaVersion = 2 };
+    await LoadCatalogProductsCaseAsync("schema-v2-non-localization-without-variant", schemaV2Modification);
+
+    string[] validLocales =
+    [
+        "pt-BR",
+        "zh-Hant-TW",
+        "sl-rozaj-biske-1994",
+        "de-DE-u-co-phonebk",
+        "x-private",
+        "i-klingon"
+    ];
+    await LoadCatalogProductsCaseAsync(
+        "valid-bcp47-locales",
+        validLocales
+            .Select((locale, index) => CreateVariantProduct(
+                $"nfg.test.localization.locale-{index}",
+                locale))
+            .ToArray());
+
+    await AssertCatalogRejectedAsync(
+        "unsupported-product-schema-v3",
+        legacyProduct with { SchemaVersion = 3 },
+        "An unsupported product schema should be rejected.");
+    await AssertCatalogRejectedAsync(
+        "schema-v1-with-variant-metadata",
+        legacyProduct with
+        {
+            FamilyId = russian.FamilyId,
+            Locale = russian.Locale,
+            ExclusiveGroup = russian.ExclusiveGroup
+        },
+        "Schema-v1 products must not declare schema-v2 variant metadata.");
+    await AssertCatalogRejectedAsync(
+        "schema-v2-localization-without-variant-metadata",
+        legacyProduct with { SchemaVersion = 2 },
+        "Schema-v2 localization products must declare variant metadata.");
+
+    foreach (var (caseName, incompleteProduct) in new[]
+             {
+                 (
+                     "schema-v2-missing-family",
+                     russian with { FamilyId = null }),
+                 (
+                     "schema-v2-missing-locale",
+                     russian with { Locale = null }),
+                 (
+                     "schema-v2-missing-exclusive-group",
+                     russian with { ExclusiveGroup = null }),
+                 (
+                     "schema-v2-non-localization-partial-variant",
+                     schemaV2Modification with { FamilyId = "nfg.test.localization" })
+             })
+    {
+        await AssertCatalogRejectedAsync(
+            caseName,
+            incompleteProduct,
+            $"Incomplete schema-v2 variant metadata case '{caseName}' should be rejected.");
+    }
+
+    foreach (var (caseName, invalidProduct) in new[]
+             {
+                 (
+                     "unsafe-product-id",
+                     russian with { Id = "nfg.test/unsafe" }),
+                 (
+                     "empty-product-id",
+                     russian with { Id = "" }),
+                 (
+                     "empty-family-id",
+                     russian with { FamilyId = "" }),
+                 (
+                     "unsafe-family-id",
+                     russian with { FamilyId = "../nfg.test.localization" }),
+                 (
+                     "unsafe-exclusive-group",
+                     russian with { ExclusiveGroup = "nfg.test.game_language" }),
+                 (
+                     "empty-exclusive-group",
+                     russian with { ExclusiveGroup = "" }),
+                 (
+                     "unsafe-dependency-id",
+                     russian with
+                     {
+                         Dependencies =
+                         [
+                             new ProductDependency
+                             {
+                                 ProductId = "legacy_dependency",
+                                 VersionRange = "*"
+                             }
+                         ]
+                     })
+             })
+    {
+        await AssertCatalogRejectedAsync(
+            caseName,
+            invalidProduct,
+            $"Unsafe stable id case '{caseName}' should be rejected.");
+    }
+
+    foreach (var invalidLocale in new[] { "ru_RU", "ru--RU", "r", "en-u", "en-variant-variant" })
+    {
+        await AssertCatalogRejectedAsync(
+            $"invalid-locale-{invalidLocale.Replace('_', '-').Replace("--", "-")}",
+            russian with { Locale = invalidLocale },
+            $"Invalid BCP-47 locale '{invalidLocale}' should be rejected.");
+    }
+
+    await AssertCatalogSetRejectedAsync(
+        "duplicate-locale-case-insensitive",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.ru-alternate",
+                "RU",
+                familyId: "NFG.TEST.LOCALIZATION",
+                exclusiveGroup: "NFG.TEST.GAME-LANGUAGE")
+        ],
+        "Locales must be unique case-insensitively within one family.");
+
+    await LoadCatalogProductsCaseAsync(
+        "same-locale-in-different-families",
+        russian,
+        CreateVariantProduct(
+            "nfg.test.other-family.ru",
+            "RU",
+            familyId: "nfg.test.other-localization"));
+
+    await AssertCatalogSetRejectedAsync(
+        "duplicate-locale-same-family-different-group",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.ru-other-slot",
+                "RU",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "A locale must remain unique within its family even when exclusive groups differ.");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-groups-different-locales",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.en-other-slot",
+                "en",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "All variants in one family must share one exclusive group.");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-exclusive-group-case-alias",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.es",
+                "es",
+                exclusiveGroup: "NFG.TEST.GAME-LANGUAGE")
+        ],
+        "Installation slot ids must use stable, identical casing.");
+
+    var anchoredRussian = CreateVariantProduct(
+        "nfg.anvil-empires.ru",
+        "ru",
+        familyId: "nfg.anvil-empires.localization",
+        exclusiveGroup: "nfg.anvil-empires.ru");
+    var anchoredSpanish = CreateVariantProduct(
+        "nfg.anvil-empires.es",
+        "es",
+        familyId: "nfg.anvil-empires.localization",
+        exclusiveGroup: "nfg.anvil-empires.ru");
+    var anchoredCatalog = await LoadCatalogProductsCaseAsync(
+        "exclusive-group-product-id-self-anchor",
+        anchoredRussian,
+        anchoredSpanish);
+    Assert(anchoredCatalog.Products.Count == 2,
+        "An exclusiveGroup may equal the product id of a member in that same slot.");
+
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-standalone-product-id",
+        [
+            russian,
+            schemaV2Modification with { Id = "nfg.test.game-language" }
+        ],
+        "An exclusiveGroup must not collide with a standalone product id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-standalone-product-id-case-alias",
+        [
+            russian,
+            schemaV2Modification with { Id = "NFG.TEST.GAME-LANGUAGE" }
+        ],
+        "A case alias of an exclusiveGroup must not collide with a standalone product id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-other-slot-product-id",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.game-language",
+                "en",
+                familyId: "nfg.test.other-localization",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "An exclusiveGroup must not collide with a product id belonging to another slot.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-collides-with-other-slot-product-id-case-alias",
+        [
+            russian,
+            CreateVariantProduct(
+                "NFG.TEST.GAME-LANGUAGE",
+                "en",
+                familyId: "nfg.test.other-localization",
+                exclusiveGroup: "nfg.test.other-game-language")
+        ],
+        "A case alias of an exclusiveGroup must not collide with another slot's product id.");
+
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-types",
+        [
+            russian,
+            CreateVariantProduct("nfg.test.localization.es", "es") with { Type = "mod" }
+        ],
+        "All variants in one family must use compatible product types.");
+    var mismatchedTitle = CreateVariantProduct("nfg.test.localization.es", "es");
+    await AssertCatalogSetRejectedAsync(
+        "same-family-different-titles",
+        [
+            russian,
+            mismatchedTitle with
+            {
+                Display = mismatchedTitle.Display with { Title = "Different title" }
+            }
+        ],
+        "All variants in one family must use the same display title.");
+
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-different-steam-app",
+        [
+            russian,
+            CreateVariantProduct("nfg.test.localization.en", "en", steamAppId: "999999")
+        ],
+        "Products in one exclusive group must share one Steam app id.");
+    await AssertCatalogSetRejectedAsync(
+        "exclusive-group-different-strategy",
+        [
+            russian,
+            CreateVariantProduct(
+                "nfg.test.localization.en",
+                "en",
+                installationStrategy: "other-managed-files")
+        ],
+        "Products in one exclusive group must use compatible installation strategies.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-without-steam-app",
+        russian with
+        {
+            Installation = russian.Installation with { Detection = [] }
+        },
+        "A variant in an exclusive group must declare one Steam app id.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-with-nonnumeric-steam-app",
+        russian with
+        {
+            Installation = russian.Installation with
+            {
+                Detection =
+                [
+                    new ProductDetectionRule { Provider = "steam", ProductId = "not-numeric" }
+                ]
+            }
+        },
+        "A variant Steam app id must be numeric.");
+    await AssertCatalogRejectedAsync(
+        "exclusive-group-with-multiple-steam-apps",
+        russian with
+        {
+            Installation = russian.Installation with
+            {
+                Detection =
+                [
+                    new ProductDetectionRule { Provider = "steam", ProductId = "2383950" },
+                    new ProductDetectionRule { Provider = "steam", ProductId = "999999" }
+                ]
+            }
+        },
+        "A variant in an exclusive group must not declare multiple Steam app ids.");
+}
+
 async Task AssertCatalogRejectedAsync(
     string caseName,
     ProductManifest product,
@@ -714,23 +1273,51 @@ async Task AssertCatalogRejectedAsync(
         () => LoadCatalogCaseAsync(caseName, SerializeProduct(product)),
         message);
 
+async Task AssertCatalogSetRejectedAsync(
+    string caseName,
+    IReadOnlyList<ProductManifest> products,
+    string message) =>
+    await AssertThrowsAsync<CatalogValidationException>(
+        () => LoadCatalogProductsCaseAsync(caseName, products.ToArray()),
+        message);
+
 async Task<StoreCatalog> LoadCatalogCaseAsync(string caseName, string productJson)
+    => await LoadCatalogJsonCaseAsync(caseName, [productJson]);
+
+async Task<StoreCatalog> LoadCatalogProductsCaseAsync(
+    string caseName,
+    params ProductManifest[] products) =>
+    await LoadCatalogJsonCaseAsync(caseName, products.Select(SerializeProduct).ToArray());
+
+async Task<StoreCatalog> LoadCatalogJsonCaseAsync(
+    string caseName,
+    IReadOnlyList<string> productJsons,
+    string catalogId = "nfg.test")
 {
     var root = Path.Combine(testRoot, "catalog-validation", caseName);
     var productsRoot = Path.Combine(root, "products");
     Directory.CreateDirectory(productsRoot);
 
+    var productPaths = productJsons
+        .Select((_, index) => $"products/test-{index}.json")
+        .ToArray();
+
     await File.WriteAllTextAsync(
         Path.Combine(root, "catalog.json"),
-        """
-        {
-          "schemaVersion": 1,
-          "catalogId": "nfg.test",
-          "displayName": "Test catalog",
-          "products": ["products/test.json"]
-        }
-        """);
-    await File.WriteAllTextAsync(Path.Combine(productsRoot, "test.json"), productJson);
+        JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = 1,
+                catalogId,
+                displayName = "Test catalog",
+                products = productPaths
+            }));
+    for (var index = 0; index < productJsons.Count; index++)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(productsRoot, $"test-{index}.json"),
+            productJsons[index]);
+    }
 
     return await new CatalogService().LoadAsync(root);
 }
@@ -909,7 +1496,7 @@ async Task CheckManagedInstallationAsync(ValidatedPackage package, ProductManife
         statePath,
         JsonSerializer.Serialize(new
         {
-            schemaVersion = installed.State.SchemaVersion,
+            schemaVersion = 1,
             productId = installed.State.ProductId,
             version = installed.State.Version,
             packageSizeBytes = installed.State.PackageSizeBytes,
@@ -929,6 +1516,8 @@ async Task CheckManagedInstallationAsync(ValidatedPackage package, ProductManife
     Assert(
         migratedLegacyState?.IsEnabled == true,
         "Legacy installation state should default to enabled.");
+    await new InstallationStateMigrator(stateStore).MigrateAsync(
+        new StoreCatalog("nfg.test", "Test", [product]));
 
     var repeated = await installer.InstallAsync(package, product, gameRoot);
     Assert(repeated.Outcome == ManagedInstallOutcome.AlreadyInstalled, "Expected idempotent install.");
@@ -1174,16 +1763,16 @@ async Task CheckManagedUpdateRecoveryAsync(
     var rollbackDataRoot = Path.Combine(testRoot, "update-recovery-rollback-data");
     var rollbackStore = new InstallationStateStore(rollbackDataRoot);
     var rollbackInstaller = new ManagedFilesInstaller(rollbackStore);
-    var rollbackOldState = (await rollbackInstaller.InstallAsync(
+    var rollbackOldState = ToLegacyState((await rollbackInstaller.InstallAsync(
         oldPackage,
         oldProduct,
-        rollbackGameRoot)).State;
+        rollbackGameRoot)).State);
+    await WriteLegacyStateAsync(rollbackDataRoot, rollbackOldState);
     var rollbackNewState = CreateUpdatedState(
         rollbackOldState,
         newPackage,
         newProduct);
     var rollbackOperationId = new string('a', 32);
-    var rollbackJournalStore = new ManagedUpdateJournalStore(rollbackStore);
     var rollbackJournal = new ManagedUpdateJournal
     {
         SchemaVersion = 1,
@@ -1192,10 +1781,10 @@ async Task CheckManagedUpdateRecoveryAsync(
         OldState = rollbackOldState,
         NewState = rollbackNewState
     };
-    await rollbackJournalStore.SaveAsync(rollbackJournal);
+    await WriteLegacyJournalAsync(rollbackDataRoot, rollbackJournal);
     await AssertThrowsAsync<InstallationStateException>(
-        () => rollbackJournalStore.SaveAsync(rollbackJournal),
-        "A pending update journal must not be overwritten by another transaction.");
+        () => new ManagedUpdateJournalStore(rollbackStore).SaveAsync(rollbackJournal),
+        "The v2 journal writer must reject a legacy journal.");
     var rollbackBackupPath =
         $"{rollbackTargetPath}.nfg-update-old-{rollbackOperationId}.disabled";
     File.Move(rollbackTargetPath, rollbackBackupPath);
@@ -1217,13 +1806,14 @@ async Task CheckManagedUpdateRecoveryAsync(
     var commitDataRoot = Path.Combine(testRoot, "update-recovery-commit-data");
     var commitStore = new InstallationStateStore(commitDataRoot);
     var commitInstaller = new ManagedFilesInstaller(commitStore);
-    var commitOldState = (await commitInstaller.InstallAsync(
+    var commitOldState = ToLegacyState((await commitInstaller.InstallAsync(
         oldPackage,
         oldProduct,
-        commitGameRoot)).State;
+        commitGameRoot)).State);
+    await WriteLegacyStateAsync(commitDataRoot, commitOldState);
     var commitNewState = CreateUpdatedState(commitOldState, newPackage, newProduct);
     var commitOperationId = new string('b', 32);
-    await new ManagedUpdateJournalStore(commitStore).SaveAsync(new ManagedUpdateJournal
+    await WriteLegacyJournalAsync(commitDataRoot, new ManagedUpdateJournal
     {
         SchemaVersion = 1,
         OperationId = commitOperationId,
@@ -1235,7 +1825,7 @@ async Task CheckManagedUpdateRecoveryAsync(
         $"{commitTargetPath}.nfg-update-old-{commitOperationId}.disabled";
     File.Move(commitTargetPath, commitBackupPath);
     await File.WriteAllBytesAsync(commitTargetPath, newPayload);
-    await commitStore.SaveAsync(commitNewState);
+    await WriteLegacyStateAsync(commitDataRoot, commitNewState);
 
     await commitInstaller.RecoverPendingOperationsAsync();
     Assert(
@@ -1266,6 +1856,56 @@ static InstalledProductState CreateUpdatedState(
             Sha256 = file.Sha256
         }).ToArray()
     };
+
+static InstalledProductState ToLegacyState(InstalledProductState state) =>
+    state with
+    {
+        SchemaVersion = 1,
+        InstallationKey = null
+    };
+
+static async Task WriteLegacyStateAsync(
+    string dataRoot,
+    InstalledProductState state)
+{
+    var path = Path.Combine(
+        dataRoot,
+        "state",
+        "installations",
+        $"{state.ProductId}.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    await File.WriteAllTextAsync(
+        path,
+        JsonSerializer.Serialize(
+            state,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+}
+
+static async Task WriteLegacyJournalAsync(
+    string dataRoot,
+    ManagedUpdateJournal journal)
+{
+    var productId = journal.ProductId
+        ?? throw new InvalidOperationException("Legacy journal fixture has no product id.");
+    var path = Path.Combine(
+        dataRoot,
+        "state",
+        "transactions",
+        $"{productId}.update.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    await File.WriteAllTextAsync(
+        path,
+        JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = 1,
+                journal.OperationId,
+                productId,
+                journal.OldState,
+                journal.NewState
+            },
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+}
 
 static ProductManifest CreateBranchProduct()
 {
@@ -1508,6 +2148,33 @@ static ProductManifest CreateProduct(
         Progress = new ProductProgress { Label = "Test" }
     };
 
+static ProductManifest CreateVariantProduct(
+    string id,
+    string locale,
+    string familyId = "nfg.test.localization",
+    string exclusiveGroup = "nfg.test.game-language",
+    string steamAppId = "2383950",
+    string installationStrategy = "managed-files")
+{
+    var product = CreateProduct(1, new string('a', 64));
+    return product with
+    {
+        SchemaVersion = 2,
+        Id = id,
+        FamilyId = familyId,
+        Locale = locale,
+        ExclusiveGroup = exclusiveGroup,
+        Installation = product.Installation with
+        {
+            Strategy = installationStrategy,
+            Detection =
+            [
+                new ProductDetectionRule { Provider = "steam", ProductId = steamAppId }
+            ]
+        }
+    };
+}
+
 static void WriteEntry(ZipArchive archive, string path, byte[] contents)
 {
     var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
@@ -1561,6 +2228,10 @@ file sealed class CatalogHandler(string bundledRoot) : HttpMessageHandler
     {
         var relativePath = request.RequestUri?.AbsolutePath.TrimStart('/')
             ?? throw new InvalidOperationException("Request URI is missing.");
+        if (relativePath.StartsWith("v2/", StringComparison.Ordinal))
+        {
+            relativePath = relativePath[3..];
+        }
         var localPath = Path.GetFullPath(Path.Combine(bundledRoot, relativePath));
         var relative = Path.GetRelativePath(bundledRoot, localPath);
         if (relative.StartsWith("..", StringComparison.Ordinal) || !File.Exists(localPath))
@@ -1631,6 +2302,10 @@ file sealed class FailingVersionStateStore(
         string productId,
         CancellationToken cancellationToken = default) =>
         inner.LoadAsync(productId, cancellationToken);
+
+    public Task<IReadOnlyList<InstalledProductState>> LoadAllAsync(
+        CancellationToken cancellationToken = default) =>
+        inner.LoadAllAsync(cancellationToken);
 
     public Task SaveAsync(
         InstalledProductState state,

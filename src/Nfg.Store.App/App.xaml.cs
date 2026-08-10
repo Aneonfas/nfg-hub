@@ -1,7 +1,9 @@
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Globalization;
 using System.Windows;
+using Nfg.Store.App.Localization;
 using Nfg.Store.App.Services;
 using Nfg.Store.App.ViewModels;
 using Nfg.Store.Core;
@@ -12,7 +14,7 @@ namespace Nfg.Store.App;
 public partial class App : Application
 {
     private static readonly Uri CatalogUri = new(
-        "https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/catalog.json");
+        "https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/v2/catalog.json");
 
     private readonly HttpClient _httpClient = new()
     {
@@ -33,6 +35,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var isStartupSmoke = e.Args.Contains("--startup-smoke", StringComparer.Ordinal);
+        var localization = LocalizationService.Instance;
+        localization.SetLanguage(LocalizationService.DetectLanguage(CultureInfo.CurrentUICulture));
 
         try
         {
@@ -44,8 +48,8 @@ public partial class App : Application
             var dataResolution = AppDataMigration.Resolve(
                 localApplicationDataRoot);
             var dataRoot = dataResolution.DataRoot;
-            var cacheRoot = Path.Combine(dataRoot, "cache", "catalog");
-            var bundledCatalogRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
+            var cacheRoot = Path.Combine(dataRoot, "cache", "catalog-v2");
+            var bundledCatalogRoot = Path.Combine(AppContext.BaseDirectory, "catalog-v2");
             var stateStore = new InstallationStateStore(dataRoot);
             var installationCoordinator = new ProductInstallationCoordinator(
                 _httpClient,
@@ -59,15 +63,15 @@ public partial class App : Application
             try
             {
                 settings = settingsStore.Load();
+                localization.SetLanguage(settings.UiLanguage ?? localization.CurrentLanguage);
             }
             catch (InvalidDataException exception)
             {
                 settings = new AppSettings();
-                var settingsWarning =
-                    $"Файл настроек повреждён или имеет неподдерживаемую версию. " +
-                    $"В этом запуске используются настройки по умолчанию.\n\n" +
-                    $"{exception.Message}\n\n" +
-                    $"Исходный файл сохранён без изменений:\n{settingsStore.SettingsPath}";
+                var settingsWarning = localization.Format(
+                    "Startup.SettingsWarning",
+                    exception.Message,
+                    settingsStore.SettingsPath);
                 startupWarning = settingsWarning;
             }
 
@@ -75,28 +79,34 @@ public partial class App : Application
             var libraryProductIds = new HashSet<string>(
                 await libraryStore.LoadAsync(),
                 StringComparer.Ordinal);
+            var discoveredStates = await stateStore.LoadAllAsync();
+            var requiredProductIds = InstallationCatalogRequirements.UnionProductIds(
+                libraryProductIds,
+                discoveredStates);
             var catalogService = new CatalogService(_httpClient);
             var catalogResult = settings.CheckUpdatesAutomatically && !isStartupSmoke
                 ? await catalogService.LoadRemoteFirstAsync(
                     CatalogUri,
                     cacheRoot,
                     bundledCatalogRoot,
-                    requiredProductIds: libraryProductIds)
+                    requiredProductIds: requiredProductIds)
                 : await catalogService.LoadLocalFirstAsync(
                     CatalogUri,
                     cacheRoot,
                     bundledCatalogRoot,
-                    requiredProductIds: libraryProductIds);
-            var installedStates = new Dictionary<string, InstalledProductState?>(
+                    requiredProductIds: requiredProductIds);
+            var migratedStates = await new InstallationStateMigrator(stateStore)
+                .MigrateAsync(catalogResult.Catalog);
+            var installedStates = migratedStates.ToDictionary(
+                state => state.InstallationKey!,
+                state => (InstalledProductState?)state,
                 StringComparer.Ordinal);
 
-            foreach (var product in catalogResult.Catalog.Products)
+            foreach (var installedState in migratedStates)
             {
-                var installedState = await stateStore.LoadAsync(product.Id);
-                installedStates[product.Id] = installedState;
-                if (installedState is not null && libraryProductIds.Add(product.Id))
+                if (libraryProductIds.Add(installedState.ProductId))
                 {
-                    await libraryStore.AddAsync(product.Id);
+                    await libraryStore.AddAsync(installedState.ProductId);
                 }
             }
 
@@ -125,7 +135,7 @@ public partial class App : Application
                 MessageBox.Show(
                     window,
                     startupWarning,
-                    "Предупреждение NFG Hub",
+                    localization.Get("Startup.WarningTitle"),
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
@@ -143,8 +153,8 @@ public partial class App : Application
                 return;
             }
             MessageBox.Show(
-                $"NFG Hub не смог запуститься.\n\n{details}",
-                "Ошибка запуска",
+                localization.Format("Startup.Error", details),
+                localization.Get("Startup.ErrorTitle"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(1);

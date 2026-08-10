@@ -4,6 +4,7 @@ using Nfg.Store.Contracts;
 using Nfg.Store.Core;
 using Nfg.Store.Installation;
 using Nfg.Store.Platform.Windows;
+using Nfg.Store.App.Localization;
 
 namespace Nfg.Store.App.Services;
 
@@ -19,45 +20,15 @@ public sealed class ProductInstallationCoordinator(
     private readonly SteamGameLocator _steamLocator = steamLocator ?? new SteamGameLocator();
     private readonly string _downloadRoot = Path.Combine(dataRoot, "downloads");
 
-    public async Task<ManagedInstallResult> InstallAsync(
+    public Task<ManagedInstallResult> InstallAsync(
         ProductManifest product,
         IProgress<ProductInstallProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(product);
-        progress?.Report(new ProductInstallProgress(0, "Поиск игры и проверка версии…"));
-        var installation = SelectInstallation(product);
-
-        var downloadProgress = new Progress<PackageDownloadProgress>(value =>
-            progress?.Report(new ProductInstallProgress(
-                8 + value.Percentage * 0.66,
-                $"Загрузка пакета: {value.Percentage:0}%")));
-        var archivePath = await _downloader.DownloadAsync(
+        CancellationToken cancellationToken = default) =>
+        ApplyVariantAsync(
             product,
-            _downloadRoot,
-            downloadProgress,
+            expectedProductId: null,
+            progress,
             cancellationToken);
-
-        progress?.Report(new ProductInstallProgress(76, "Проверка пакета и контрольных сумм…"));
-        var package = await _archiveService.ValidateAsync(
-            archivePath,
-            product,
-            cancellationToken);
-
-        progress?.Report(new ProductInstallProgress(88, "Повторная проверка версии игры…"));
-        installation = RequireInstallationAtRoot(product, installation.GameRoot);
-
-        progress?.Report(new ProductInstallProgress(92, "Безопасная установка файлов…"));
-        var result = await _installer.InstallAsync(
-            package,
-            product,
-            installation.GameRoot,
-            installation.BuildId,
-            cancellationToken);
-
-        progress?.Report(new ProductInstallProgress(100, "Установка завершена."));
-        return result;
-    }
 
     public Task<ManagedInstallResult> UpdateAsync(
         ProductManifest product,
@@ -71,41 +42,90 @@ public sealed class ProductInstallationCoordinator(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(product);
-        progress?.Report(new ProductInstallProgress(0, "Поиск игры и проверка версии…"));
-        var installedState = await stateStore.LoadAsync(product.Id, cancellationToken)
+        var installationKey = ProductInstallationKey.FromManifest(product);
+        var installedState = await stateStore.LoadAsync(installationKey, cancellationToken)
             ?? throw new ProductInstallationException(
-                $"Продукт '{product.Id}' не установлен через NFG Hub.");
-        var installation = SelectInstallation(product, installedState.GameRoot);
-
-        var downloadProgress = new Progress<PackageDownloadProgress>(value =>
-            progress?.Report(new ProductInstallProgress(
-                8 + value.Percentage * 0.66,
-                $"Загрузка выбранной версии: {value.Percentage:0}%")));
-        var archivePath = await _downloader.DownloadAsync(
+                LocalizationService.Instance.Format(
+                    "Install.SlotNotInstalled",
+                    installationKey));
+        return await ApplyVariantAsync(
             product,
-            _downloadRoot,
-            downloadProgress,
+            installedState.ProductId,
+            progress,
             cancellationToken);
+    }
 
-        progress?.Report(new ProductInstallProgress(76, "Проверка пакета и контрольных сумм…"));
-        var package = await _archiveService.ValidateAsync(
-            archivePath,
-            product,
-            cancellationToken);
+    public async Task<ManagedInstallResult> ApplyVariantAsync(
+        ProductManifest product,
+        string? expectedProductId,
+        IProgress<ProductInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        var installationKey = ProductInstallationKey.FromManifest(product);
 
-        progress?.Report(new ProductInstallProgress(88, "Повторная проверка версии игры…"));
-        installation = RequireInstallationAtRoot(product, installation.GameRoot);
+        return await ExecuteReportingPersistedOutcomeAsync(
+            installationKey,
+            async () =>
+            {
+                var currentState = await stateStore.LoadAsync(
+                    installationKey,
+                    cancellationToken);
+                progress?.Report(new ProductInstallProgress(
+                    0,
+                    LocalizationService.Instance.Get("Install.FindGame")));
+                var installation = SelectInstallation(
+                    product,
+                    currentState?.GameRoot);
 
-        progress?.Report(new ProductInstallProgress(92, "Безопасное переключение версии…"));
-        var result = await _installer.SwitchVersionAsync(
-            package,
-            product,
-            installation.GameRoot,
-            installation.BuildId,
-            cancellationToken);
+                var downloadProgress = new Progress<PackageDownloadProgress>(value =>
+                    progress?.Report(new ProductInstallProgress(
+                        8 + value.Percentage * 0.66,
+                        LocalizationService.Instance.Format("Install.Download", value.Percentage))));
+                var archivePath = await _downloader.DownloadAsync(
+                    product,
+                    _downloadRoot,
+                    downloadProgress,
+                    cancellationToken);
 
-        progress?.Report(new ProductInstallProgress(100, "Версия продукта переключена."));
-        return result;
+                progress?.Report(new ProductInstallProgress(
+                    76,
+                    LocalizationService.Instance.Get("Install.Verify")));
+                var package = await _archiveService.ValidateAsync(
+                    archivePath,
+                    product,
+                    cancellationToken);
+
+                progress?.Report(new ProductInstallProgress(
+                    88,
+                    LocalizationService.Instance.Get("Install.Recheck")));
+                installation = RequireInstallationAtRoot(
+                    product,
+                    installation.GameRoot);
+
+                progress?.Report(new ProductInstallProgress(
+                    92,
+                    LocalizationService.Instance.Get("Install.Apply")));
+                var result = expectedProductId is null
+                    ? await _installer.InstallAsync(
+                        package,
+                        product,
+                        installation.GameRoot,
+                        installation.BuildId,
+                        cancellationToken)
+                    : await _installer.ApplyVariantAsync(
+                        package,
+                        product,
+                        installation.GameRoot,
+                        expectedProductId,
+                        installation.BuildId,
+                        cancellationToken);
+
+                progress?.Report(new ProductInstallProgress(
+                    100,
+                    LocalizationService.Instance.Get("Install.Applied")));
+                return result;
+            });
     }
 
     public ProductGameInstallation? DetectGameInstallation(
@@ -125,18 +145,15 @@ public sealed class ProductInstallationCoordinator(
             return null;
         }
 
-        SteamGameInstallation? selected = null;
         if (!string.IsNullOrWhiteSpace(preferredGameRoot))
         {
-            selected = candidates.FirstOrDefault(candidate =>
+            var preferred = candidates.FirstOrDefault(candidate =>
                 PathsEqual(candidate.GameRoot, preferredGameRoot));
-            return selected is null
-                ? null
-                : ToProductInstallation(selected);
+            return preferred is null ? null : ToProductInstallation(preferred);
         }
 
         var expectedBuildId = GetExpectedSteamBuildId(product);
-        selected = candidates
+        var selected = candidates
             .OrderBy(candidate => candidate.BuildId.Equals(
                 expectedBuildId,
                 StringComparison.Ordinal) ? 0 : 1)
@@ -149,16 +166,103 @@ public sealed class ProductInstallationCoordinator(
         CancellationToken cancellationToken = default) =>
         _installer.RecoverPendingOperationsAsync(cancellationToken);
 
+    public Task<InstalledProductState?> LoadInstalledStateAsync(
+        string installationKey,
+        CancellationToken cancellationToken = default) =>
+        stateStore.LoadAsync(installationKey, cancellationToken);
+
     public Task RemoveFromDeviceAsync(
         string productId,
         CancellationToken cancellationToken = default) =>
-        _installer.UninstallAsync(productId, cancellationToken);
+        RemoveFromDeviceAsync(productId, productId, cancellationToken);
+
+    public async Task RemoveFromDeviceAsync(
+        string installationKey,
+        string expectedProductId,
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteReportingPersistedOutcomeAsync(
+            installationKey,
+            async () =>
+            {
+                await _installer.UninstallAsync(
+                    installationKey,
+                    expectedProductId,
+                    cancellationToken);
+                return true;
+            });
+    }
 
     public Task<InstalledProductState> SetEnabledAsync(
         string productId,
         bool isEnabled,
         CancellationToken cancellationToken = default) =>
-        _installer.SetEnabledAsync(productId, isEnabled, cancellationToken);
+        SetEnabledAsync(productId, productId, isEnabled, cancellationToken);
+
+    public Task<InstalledProductState> SetEnabledAsync(
+        string installationKey,
+        string expectedProductId,
+        bool isEnabled,
+        CancellationToken cancellationToken = default) =>
+        ExecuteReportingPersistedOutcomeAsync(
+            installationKey,
+            () => _installer.SetEnabledAsync(
+                installationKey,
+                expectedProductId,
+                isEnabled,
+                cancellationToken));
+
+    private async Task<T> ExecuteReportingPersistedOutcomeAsync<T>(
+        string installationKey,
+        Func<Task<T>> operation)
+    {
+        try
+        {
+            return await operation();
+        }
+        catch (OperationCanceledException)
+        {
+            _ = await ReadActualOutcomeAsync(installationKey);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var outcome = await ReadActualOutcomeAsync(installationKey);
+            var actualOutcome = !outcome.IsReadable
+                ? LocalizationService.Instance.Get("Install.ActualReadFailed")
+                : outcome.State is null
+                    ? LocalizationService.Instance.Get("Install.ActualNotInstalled")
+                    : LocalizationService.Instance.Format(
+                        "Install.ActualInstalled",
+                        outcome.State.ProductId,
+                        outcome.State.Version,
+                        outcome.State.IsEnabled
+                            ? LocalizationService.Instance.Get("State.ActualEnabled")
+                            : LocalizationService.Instance.Get("State.ActualDisabled"));
+            throw new ProductInstallationException(
+                $"{exception.Message} {actualOutcome}",
+                exception,
+                outcome.State,
+                actualStateUnreadable: !outcome.IsReadable);
+        }
+    }
+
+    private async Task<PersistedOutcome> ReadActualOutcomeAsync(
+        string installationKey)
+    {
+        try
+        {
+            return new PersistedOutcome(
+                IsReadable: true,
+                await stateStore.LoadAsync(
+                    installationKey,
+                    CancellationToken.None));
+        }
+        catch
+        {
+            return new PersistedOutcome(IsReadable: false, State: null);
+        }
+    }
 
     private SteamGameInstallation SelectInstallation(
         ProductManifest product,
@@ -169,7 +273,7 @@ public sealed class ProductInstallationCoordinator(
         if (candidates.Count == 0)
         {
             throw new ProductInstallationException(
-                $"Игра Steam App ID {appId} не найдена.");
+                LocalizationService.Instance.Format("Install.GameNotFound", appId));
         }
 
         if (!string.IsNullOrWhiteSpace(preferredGameRoot))
@@ -177,7 +281,9 @@ public sealed class ProductInstallationCoordinator(
             return candidates.FirstOrDefault(candidate =>
                        PathsEqual(candidate.GameRoot, preferredGameRoot))
                    ?? throw new ProductInstallationException(
-                       $"Управляемая установка игры '{Path.GetFullPath(preferredGameRoot)}' не найдена в Steam.");
+                       LocalizationService.Instance.Format(
+                           "Install.ManagedGameNotFound",
+                           Path.GetFullPath(preferredGameRoot)));
         }
 
         var expectedBuildId = GetExpectedSteamBuildId(product);
@@ -194,12 +300,10 @@ public sealed class ProductInstallationCoordinator(
         string gameRoot) =>
         SelectInstallation(product, gameRoot);
 
-    private static string GetSteamAppId(ProductManifest product)
-    {
-        return TryGetSteamAppId(product)
-            ?? throw new ProductInstallationException(
-                $"Продукт '{product.Id}' должен объявлять один Steam App ID.");
-    }
+    private static string GetSteamAppId(ProductManifest product) =>
+        TryGetSteamAppId(product)
+        ?? throw new ProductInstallationException(
+            LocalizationService.Instance.Format("Install.MissingSteamAppId", product.Id));
 
     private static string? TryGetSteamAppId(ProductManifest product)
     {
@@ -210,7 +314,9 @@ public sealed class ProductInstallationCoordinator(
                                "steam",
                                StringComparison.OrdinalIgnoreCase))
             .Select(rule => rule.ProductId)
-            .Where(value => !string.IsNullOrWhiteSpace(value) && value.All(char.IsAsciiDigit))
+            .Where(value =>
+                !string.IsNullOrWhiteSpace(value) &&
+                value.All(char.IsAsciiDigit))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         return appIds.Length == 1 ? appIds[0] : null;
@@ -220,7 +326,9 @@ public sealed class ProductInstallationCoordinator(
     {
         var gameVersion = product.Compatibility.GameVersion;
         return gameVersion is not null &&
-               gameVersion.StartsWith(ProductReleaseCatalog.SteamBuildPrefix, StringComparison.Ordinal)
+               gameVersion.StartsWith(
+                   ProductReleaseCatalog.SteamBuildPrefix,
+                   StringComparison.Ordinal)
             ? gameVersion[ProductReleaseCatalog.SteamBuildPrefix.Length..]
             : null;
     }
@@ -237,4 +345,8 @@ public sealed class ProductInstallationCoordinator(
         Path.GetFullPath(left).Equals(
             Path.GetFullPath(right),
             StringComparison.OrdinalIgnoreCase);
+
+    private sealed record PersistedOutcome(
+        bool IsReadable,
+        InstalledProductState? State);
 }

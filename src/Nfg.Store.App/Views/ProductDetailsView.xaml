@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:loc="clr-namespace:Nfg.Store.App.Localization"
              mc:Ignorable="d"
              d:DesignHeight="820"
              d:DesignWidth="1200">
@@ -60,7 +61,7 @@
                     HorizontalAlignment="Left"
                     Padding="14,8"
                     Style="{StaticResource SecondaryButtonStyle}"
-                    Content="← Назад"
+                    Content="{loc:Loc Details.Back}"
                     Command="{Binding DataContext.BackFromProductCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
 
             <Border Grid.Row="1"
@@ -115,9 +116,26 @@
                             <StackPanel Margin="0,22,0,0"
                                         MaxWidth="420"
                                         HorizontalAlignment="Left"
+                                        Visibility="{Binding HasMultipleVariants, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Margin="1,0,0,7"
+                                           Text="{loc:Loc Common.LanguageForInstall}"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <ComboBox MinWidth="320"
+                                          ItemsSource="{Binding AvailableVariants}"
+                                          SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanSelectVariant}"
+                                          AutomationProperties.Name="{loc:Loc Common.LanguageSelection}"
+                                          Style="{StaticResource VariantComboBoxStyle}" />
+                            </StackPanel>
+
+                            <StackPanel Margin="0,14,0,0"
+                                        MaxWidth="420"
+                                        HorizontalAlignment="Left"
                                         Visibility="{Binding HasMultipleVersions, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Margin="1,0,0,7"
-                                           Text="ВЕРСИЯ ДЛЯ УСТАНОВКИ"
+                                           Text="{loc:Loc Common.VersionForInstall}"
                                            FontSize="10"
                                            FontWeight="Bold"
                                            Foreground="{StaticResource TextSecondaryBrush}" />
@@ -125,25 +143,16 @@
                                           ItemsSource="{Binding AvailableVersions}"
                                           SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
                                           IsEnabled="{Binding CanSelectVersion}"
-                                          AutomationProperties.Name="Выбор версии продукта"
+                                          AutomationProperties.Name="{loc:Loc Common.VersionSelection}"
                                           Style="{StaticResource VersionComboBoxStyle}" />
                             </StackPanel>
 
                             <StackPanel Margin="0,22,0,0" Orientation="Horizontal">
                                 <Button MinWidth="185"
                                         Style="{StaticResource PrimaryButtonStyle}"
-                                        Command="{Binding InstallCommand}"
-                                        IsEnabled="{Binding CanInstall}"
-                                        Visibility="{Binding IsNotInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        Command="{Binding ApplyVariantCommand}"
+                                        IsEnabled="{Binding CanApply}">
                                     <TextBlock Text="{Binding PrimaryActionText}"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </Button>
-                                <Button MinWidth="185"
-                                        Style="{StaticResource PrimaryButtonStyle}"
-                                        Command="{Binding UpdateCommand}"
-                                        IsEnabled="{Binding CanUpdate}"
-                                        Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <TextBlock Text="{Binding UpdateActionText}"
                                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                                 </Button>
                             </StackPanel>
@@ -182,23 +191,23 @@
                                     BorderThickness="1"
                                     CornerRadius="10">
                                 <StackPanel>
-                                    <TextBlock Text="ВЕРСИЯ В КАТАЛОГЕ"
+                                    <TextBlock Text="{loc:Loc Common.Selected}"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource TextSecondaryBrush}" />
                                     <TextBlock Margin="0,5,0,0"
-                                               Text="{Binding SelectedVersionLabel}"
+                                               Text="{Binding SelectedSelectionText}"
                                                FontFamily="Cascadia Mono, Consolas"
                                                FontSize="15"
                                                Foreground="{StaticResource AccentBrush}" />
                                     <StackPanel Margin="0,9,0,0"
                                                 Visibility="{Binding IsInstalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <TextBlock Text="УСТАНОВЛЕНА"
+                                        <TextBlock Text="{loc:Loc Common.Installed}"
                                                    FontSize="9"
                                                    FontWeight="Bold"
                                                    Foreground="{StaticResource TextSecondaryBrush}" />
                                         <TextBlock Margin="0,3,0,0"
-                                                   Text="{Binding InstalledVersionLabel}"
+                                                   Text="{Binding InstalledSelectionText}"
                                                    FontFamily="Cascadia Mono, Consolas"
                                                    FontSize="13"
                                                    Foreground="#D7DCE2" />
@@ -214,7 +223,7 @@
                                     BorderThickness="1"
                                     CornerRadius="10">
                                 <StackPanel>
-                                    <TextBlock Text="СОВМЕСТИМОСТЬ"
+                                    <TextBlock Text="{loc:Loc Common.Compatibility}"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource TextSecondaryBrush}" />
@@ -244,7 +253,7 @@
                                     BorderThickness="1"
                                     CornerRadius="10">
                                 <StackPanel>
-                                    <TextBlock Text="СТАТУС"
+                                    <TextBlock Text="{loc:Loc Common.Status}"
                                                FontSize="10"
                                                FontWeight="Bold"
                                                Foreground="{StaticResource TextSecondaryBrush}" />
@@ -351,7 +360,7 @@
                                     Margin="0,0,12,0"
                                     Background="{StaticResource AccentBrush}"
                                     CornerRadius="2" />
-                            <TextBlock Text="О продукте"
+                            <TextBlock Text="{loc:Loc Details.About}"
                                        Style="{StaticResource SectionTitleStyle}" />
                         </StackPanel>
                         <TextBlock Margin="15,14,0,0"
@@ -376,7 +385,7 @@
                                     CornerRadius="10"
                                     Visibility="{Binding FeaturedProduct.HasFeatures, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel>
-                                    <TextBlock Text="Возможности"
+                                    <TextBlock Text="{loc:Loc Details.Features}"
                                                Margin="0,0,0,13"
                                                FontSize="15"
                                                FontWeight="SemiBold" />
@@ -411,7 +420,7 @@
                                 CornerRadius="10"
                                 Visibility="{Binding HasSelectedKnownIssues, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <StackPanel>
-                                <TextBlock Text="Известные ограничения"
+                                <TextBlock Text="{loc:Loc Details.KnownIssues}"
                                            Margin="0,0,0,11"
                                            FontSize="14"
                                            FontWeight="SemiBold"
@@ -423,7 +432,7 @@
 
                         <StackPanel Margin="15,16,0,0"
                                     Visibility="{Binding HasSelectedNotesUrl, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="Полное описание выпуска"
+                            <TextBlock Text="{loc:Loc Details.FullReleaseNotes}"
                                        Margin="0,0,0,5"
                                        FontSize="11"
                                        FontWeight="SemiBold"
@@ -433,7 +442,7 @@
                                 <Hyperlink NavigateUri="{Binding SelectedNotesUrl}"
                                            RequestNavigate="ReleaseNotesLink_OnRequestNavigate"
                                            Style="{StaticResource AccentHyperlinkStyle}">
-                                    Открыть страницу релиза ↗
+                                    <Run Text="{loc:Loc Details.OpenReleasePage}" />
                                 </Hyperlink>
                             </TextBlock>
                         </StackPanel>
@@ -445,7 +454,7 @@
                         Padding="24,22"
                         Style="{StaticResource CardStyle}">
                     <StackPanel>
-                        <TextBlock Text="Состояние продукта"
+                        <TextBlock Text="{loc:Loc Details.ProductState}"
                                    Style="{StaticResource SectionTitleStyle}" />
                         <Border Margin="0,18,0,0"
                                 Padding="12,10"

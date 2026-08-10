@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:loc="clr-namespace:Nfg.Store.App.Localization"
         xmlns:vm="clr-namespace:Nfg.Store.App.ViewModels"
         xmlns:views="clr-namespace:Nfg.Store.App.Views"
         mc:Ignorable="d"
@@ -70,7 +71,7 @@
                         </StackPanel>
                         <TextBlock Margin="1,6,0,0"
                                    Style="{StaticResource MutedTextStyle}"
-                                   Text="Кураторский каталог продуктов" />
+                                   Text="{loc:Loc Shell.Tagline}" />
                     </StackPanel>
 
                     <ItemsControl Grid.Row="1" ItemsSource="{Binding Navigation}">
@@ -107,7 +108,7 @@
                             BorderThickness="1"
                             CornerRadius="9">
                         <StackPanel>
-                            <TextBlock Text="DEV PREVIEW"
+                            <TextBlock Text="{loc:Loc Shell.Preview}"
                                        FontSize="10"
                                        FontWeight="Bold"
                                        Foreground="{StaticResource AccentBrush}" />

@@ -1,4 +1,5 @@
 using System.IO;
+using Nfg.Store.App.Localization;
 
 namespace Nfg.Store.App.Services;
 
@@ -27,8 +28,7 @@ public static class AppDataMigration
             exception is IOException or UnauthorizedAccessException)
         {
             throw new IOException(
-                "Не удалось перенести данные NFG Store в новую папку NFG Hub. " +
-                "Запуск остановлен, чтобы сохранить исходные данные без изменений.",
+                LocalizationService.Instance.Get("Startup.MigrationFailed"),
                 exception);
         }
     }
@@ -36,7 +36,8 @@ public static class AppDataMigration
     private static void CopyLegacyDataAtomically(string legacyRoot, string hubRoot)
     {
         var parentRoot = Path.GetDirectoryName(hubRoot)
-            ?? throw new IOException("Не удалось определить папку данных NFG Hub.");
+            ?? throw new IOException(
+                LocalizationService.Instance.Get("Startup.DataRootFailed"));
         Directory.CreateDirectory(parentRoot);
 
         var temporaryRoot = Path.Combine(

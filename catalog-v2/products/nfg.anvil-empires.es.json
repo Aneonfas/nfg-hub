@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "nfg.anvil-empires.es",
+  "type": "localization",
+  "familyId": "nfg.anvil-empires.localization",
+  "locale": "es",
+  "exclusiveGroup": "nfg.anvil-empires.ru",
+  "display": {
+    "title": "Anvil Empires",
+    "subtitle": "Localización española",
+    "summary": "Traducción al español de la interfaz, objetos y sistemas del juego.",
+    "description": "Traducción no oficial al español de Anvil Empires Pre-Alpha para Windows y Steam. Incluye el catálogo cooked, textos native y cadenas adicionales del motor.",
+    "features": [
+      "2 994 entradas de localización",
+      "Interfaz, objetos, estructuras, producción, misiones y mensajes del sistema",
+      "Compatible con las fuentes latinas incluidas en el juego"
+    ]
+  },
+  "release": {
+    "version": "0.1.0",
+    "channel": "beta",
+    "gameVersion": "steam-build-24619810",
+    "highlights": [
+      "Primer candidato beta completo para Steam build 24619810",
+      "2 572 entradas cooked, 413 native y 9 supplemental",
+      "PAK y paquete NFG verificados localmente"
+    ],
+    "knownIssues": [
+      "Los mensajes del servidor pueden permanecer en inglés",
+      "El texto incluido en imágenes no se traduce",
+      "Algunas rutas poco frecuentes todavía requieren comprobación visual"
+    ],
+    "notesUrl": "https://github.com/Aneonfas/anvil-empires-localizations/releases/tag/es-v0.1.0",
+    "payload": {
+      "url": "https://github.com/Aneonfas/anvil-empires-localizations/releases/download/es-v0.1.0/Anvil-Empires-Spanish-v0.1.0-steam-build-24619810.zip",
+      "sizeBytes": 290616,
+      "sha256": "ed02d8f7d22fddd5d3250c4330af4148a4c2c4d49dc36e6d616d072bca7511af"
+    }
+  },
+  "releases": [],
+  "compatibility": {
+    "platforms": ["windows-x64"],
+    "gameVersion": "steam-build-24619810",
+    "status": "compatible"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": 100,
+    "label": "Beta 0.1.0"
+  }
+}
