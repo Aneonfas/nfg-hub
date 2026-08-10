@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "repository": "https://github.com/Aneonfas/nfg-hub-catalog",
-    "commit": "29fe8366b196dafd0b18200c8c7d5f70072e73de",
+    "commit": "dc33edf1e4b23f832cc9577f0f1b3906d602b3ec",
     "catalogPath": "v2/catalog.json"
   },
   "files": [
