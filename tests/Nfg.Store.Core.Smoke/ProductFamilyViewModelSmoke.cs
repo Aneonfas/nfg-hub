@@ -64,6 +64,12 @@ internal static class ProductFamilyViewModelSmoke
             "Selected ES was not displayed separately from installed RU.");
         Assert(family.AvailableVersions.Count == 2,
             "Selecting language before version did not rebuild ES release options.");
+        Assert(family.SelectedVersionValue == "1.0.0",
+            "The selected version value was not restored after changing language.");
+        family.SelectedVersionValue = "0.9.0";
+        Assert(family.SelectedVersion?.Version == "0.9.0",
+            "The version selector value did not update the selected release.");
+        family.SelectedVersionValue = "1.0.0";
         Assert(family.HasVariantChange && !family.HasVersionChange,
             "A same-SemVer RU to ES transition was not classified as a variant switch.");
         Assert(family.CanApply, "A same-SemVer RU to ES transition was not actionable.");

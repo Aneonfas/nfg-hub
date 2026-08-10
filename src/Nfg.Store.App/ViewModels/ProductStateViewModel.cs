@@ -241,6 +241,21 @@ public sealed class ProductStateViewModel : PageViewModel
         }
     }
 
+    public string? SelectedVersionValue
+    {
+        get => _selectedVersion?.Version;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            SelectedVersion = AvailableVersions.FirstOrDefault(version =>
+                version.Version.Equals(value, StringComparison.Ordinal));
+        }
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -1024,6 +1039,7 @@ public sealed class ProductStateViewModel : PageViewModel
         _operationHasError = false;
         OperationStatus = string.Empty;
         OnPropertyChanged(nameof(SelectedVersionLabel));
+        OnPropertyChanged(nameof(SelectedVersionValue));
         OnPropertyChanged(nameof(SelectedSelectionText));
         OnPropertyChanged(nameof(IsSelectedVersionExact));
         OnPropertyChanged(nameof(IsSelectedVersionUnverified));

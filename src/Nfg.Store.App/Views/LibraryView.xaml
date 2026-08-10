@@ -192,7 +192,8 @@
                                                        FontWeight="Bold"
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
                                             <ComboBox ItemsSource="{Binding AvailableVersions}"
-                                                      SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                                                      SelectedValuePath="Version"
+                                                      SelectedValue="{Binding SelectedVersionValue, Mode=TwoWay}"
                                                       IsEnabled="{Binding CanSelectVersion}"
                                                       AutomationProperties.Name="{loc:Loc Common.VersionSelection}"
                                                       Style="{StaticResource VersionComboBoxStyle}" />
