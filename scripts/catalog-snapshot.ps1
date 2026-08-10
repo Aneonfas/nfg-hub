@@ -20,14 +20,14 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$catalogDirectoryName = if ($Feed -ceq 'V2') { 'catalog-v2' } else { 'catalog' }
-$snapshotManifestName = if ($Feed -ceq 'V2') {
+$catalogDirectoryName = if ($Feed -eq 'V2') { 'catalog-v2' } else { 'catalog' }
+$snapshotManifestName = if ($Feed -eq 'V2') {
     'catalog-v2.snapshot.json'
 }
 else {
     'catalog.snapshot.json'
 }
-$sourceCatalogPath = if ($Feed -ceq 'V2') { 'v2/catalog.json' } else { 'catalog.json' }
+$sourceCatalogPath = if ($Feed -eq 'V2') { 'v2/catalog.json' } else { 'catalog.json' }
 $catalogRoot = Join-Path $repositoryRoot $catalogDirectoryName
 $snapshotManifestPath = Join-Path $repositoryRoot $snapshotManifestName
 $smokeProject = Join-Path $repositoryRoot 'tests\Nfg.Store.Core.Smoke\Nfg.Store.Core.Smoke.csproj'
