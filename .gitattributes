@@ -1,3 +1,6 @@
 catalog/*.json text eol=lf
 catalog/**/*.json text eol=lf
 catalog.snapshot.json text eol=lf
+catalog-v2/*.json text eol=lf
+catalog-v2/**/*.json text eol=lf
+catalog-v2.snapshot.json text eol=lf
