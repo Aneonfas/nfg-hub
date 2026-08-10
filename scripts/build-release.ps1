@@ -95,7 +95,7 @@ try {
     }
 
     $executablePath = Join-Path $stagedPublishDirectory 'NFG.Hub.exe'
-    $catalogRoot = Join-Path $stagedPublishDirectory 'catalog'
+    $catalogRoot = Join-Path $stagedPublishDirectory 'catalog-v2'
     $catalogIndexPath = Join-Path $catalogRoot 'catalog.json'
     foreach ($requiredPath in @(
         $executablePath,
@@ -227,8 +227,8 @@ try {
                 }
             }
 
-            $requiredEntries = @('NFG.Hub.exe', 'catalog/catalog.json') + @(
-                $catalogProductRelativePaths | ForEach-Object { "catalog/$($_.Replace('\', '/'))" })
+            $requiredEntries = @('NFG.Hub.exe', 'catalog-v2/catalog.json') + @(
+                $catalogProductRelativePaths | ForEach-Object { "catalog-v2/$($_.Replace('\', '/'))" })
             foreach ($requiredEntry in $requiredEntries) {
                 if (-not $entryNames.Contains($requiredEntry)) {
                     throw "Release archive is missing required entry: $requiredEntry"

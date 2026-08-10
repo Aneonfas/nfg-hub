@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "nfg.anvil-empires.forge-helper",
+  "type": "mod",
+  "display": {
+    "title": "Anvil Forge Helper",
+    "subtitle": "Метки качества ковки",
+    "summary": "Компактные метки качества на иконках деталей для точного контроля ковки.",
+    "description": "Модификация интерфейса Anvil Empires Pre-Alpha для Windows и Steam. Добавляет аккуратные метки на иконки результатов ковки с качеством и помогает совмещать нужную отметку с полосой охлаждения.",
+    "features": [
+      "Метки на всех 10 актуальных результатах ковки с качеством",
+      "Компактный бирюзовый шеврон у левого края иконки",
+      "Только замена текстур — без изменения механики ковки"
+    ]
+  },
+  "release": {
+    "version": "1.0.0",
+    "channel": "stable",
+    "gameVersion": "steam-build-24619810",
+    "publishedAt": "2026-08-08T19:28:05Z",
+    "highlights": [
+      "Размечены все 10 актуальных результатов ковки с качеством",
+      "Метки расположены у левого края для точного совмещения с полосой охлаждения",
+      "Железные и бронзовые иконки оформлены в едином аккуратном стиле"
+    ],
+    "knownIssues": [
+      "Несовместимо с другими модификациями, заменяющими те же иконки ковки",
+      "После обновления Anvil Empires совместимость необходимо проверить заново"
+    ],
+    "notesUrl": "https://github.com/nullith2/Anvil-forge-helper/releases/tag/v1.0.0",
+    "payload": {
+      "url": "https://github.com/nullith2/Anvil-forge-helper/releases/download/v1.0.0/Anvil-Forge-Helper-1.0.0-nfg-build24619810.zip",
+      "sizeBytes": 30633,
+      "sha256": "976e4529f97a40516740678b21bf36fcb25141c79981b4e4f95b123cc2791ab7"
+    }
+  },
+  "compatibility": {
+    "platforms": ["windows-x64"],
+    "gameVersion": "steam-build-24619810",
+    "status": "compatible"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": null,
+    "label": "Стабильная версия"
+  }
+}

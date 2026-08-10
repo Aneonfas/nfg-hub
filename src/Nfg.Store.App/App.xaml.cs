@@ -14,7 +14,7 @@ namespace Nfg.Store.App;
 public partial class App : Application
 {
     private static readonly Uri CatalogUri = new(
-        "https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/catalog.json");
+        "https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/v2/catalog.json");
 
     private readonly HttpClient _httpClient = new()
     {
@@ -48,8 +48,8 @@ public partial class App : Application
             var dataResolution = AppDataMigration.Resolve(
                 localApplicationDataRoot);
             var dataRoot = dataResolution.DataRoot;
-            var cacheRoot = Path.Combine(dataRoot, "cache", "catalog");
-            var bundledCatalogRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
+            var cacheRoot = Path.Combine(dataRoot, "cache", "catalog-v2");
+            var bundledCatalogRoot = Path.Combine(AppContext.BaseDirectory, "catalog-v2");
             var stateStore = new InstallationStateStore(dataRoot);
             var installationCoordinator = new ProductInstallationCoordinator(
                 _httpClient,

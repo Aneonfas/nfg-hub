@@ -93,14 +93,14 @@ if (args.Length > 0)
         "--managed-state-mutation]");
 }
 
-var catalogUri = new Uri("https://catalog.test/catalog.json");
-var bundledRoot = Path.Combine(AppContext.BaseDirectory, "catalog");
+var catalogUri = new Uri("https://catalog.test/v2/catalog.json");
+var bundledRoot = Path.Combine(AppContext.BaseDirectory, "catalog-v2");
 var testRoot = Path.Combine(
     Path.GetTempPath(),
     "nfg-store-smoke",
     Guid.NewGuid().ToString("N"));
-var cacheRoot = Path.Combine(testRoot, "cache");
-var emptyCacheRoot = Path.Combine(testRoot, "empty-cache");
+var cacheRoot = Path.Combine(testRoot, "cache", "catalog-v2");
+var emptyCacheRoot = Path.Combine(testRoot, "empty-cache", "catalog-v2");
 
 try
 {
@@ -746,11 +746,12 @@ async Task CheckCatalogSourcesAsync()
     Assert(remoteResult.Source == CatalogSourceKind.Remote, "Expected remote catalog source.");
     var product = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.ru");
-    Assert(product.SchemaVersion == 1, "Russian localization should remain compatible with schema v1.");
-    Assert(product.FamilyId is null, "Schema-v1 Russian localization must not declare familyId.");
-    Assert(product.Locale is null, "Schema-v1 Russian localization must not declare locale.");
-    Assert(product.ExclusiveGroup is null,
-        "Schema-v1 Russian localization must not declare exclusiveGroup.");
+    Assert(product.SchemaVersion == 2, "Russian localization should use product schema v2.");
+    Assert(product.FamilyId == "nfg.anvil-empires.localization",
+        "Russian localization has an unexpected familyId.");
+    Assert(product.Locale == "ru", "Russian localization has an unexpected locale.");
+    Assert(product.ExclusiveGroup == "nfg.anvil-empires.ru",
+        "Russian localization has an unexpected installation slot.");
     Assert(product.Release.Version == "1.0.1", "Unexpected current localization version.");
     Assert(product.Release.GameVersion == "steam-build-24619810",
         "Current localization targets an unexpected game build.");
@@ -767,6 +768,19 @@ async Task CheckCatalogSourcesAsync()
     Assert(
         File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.ru.json")),
         "Product manifest was not cached.");
+
+    var spanish = remoteResult.Catalog.Products.Single(candidate =>
+        candidate.Id == "nfg.anvil-empires.es");
+    Assert(spanish.SchemaVersion == 2, "Spanish localization should use product schema v2.");
+    Assert(spanish.FamilyId == product.FamilyId,
+        "Russian and Spanish localizations should share a family.");
+    Assert(spanish.Locale == "es", "Spanish localization has an unexpected locale.");
+    Assert(spanish.ExclusiveGroup == product.ExclusiveGroup,
+        "Russian and Spanish localizations should share one installation slot.");
+    Assert(spanish.Release.Version == "0.1.0", "Unexpected Spanish localization version.");
+    Assert(
+        File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.es.json")),
+        "Spanish manifest was not cached.");
 
     var forgeHelper = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.forge-helper");
@@ -2214,6 +2228,10 @@ file sealed class CatalogHandler(string bundledRoot) : HttpMessageHandler
     {
         var relativePath = request.RequestUri?.AbsolutePath.TrimStart('/')
             ?? throw new InvalidOperationException("Request URI is missing.");
+        if (relativePath.StartsWith("v2/", StringComparison.Ordinal))
+        {
+            relativePath = relativePath[3..];
+        }
         var localPath = Path.GetFullPath(Path.Combine(bundledRoot, relativePath));
         var relative = Path.GetRelativePath(bundledRoot, localPath);
         if (relative.StartsWith("..", StringComparison.Ordinal) || !File.Exists(localPath))

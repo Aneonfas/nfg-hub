@@ -8,15 +8,28 @@ param(
 
     [Parameter(ParameterSetName = 'Sync')]
     [Parameter(ParameterSetName = 'Check')]
-    [string]$AuthoritativeRoot
+    [string]$AuthoritativeRoot,
+
+    [Parameter(ParameterSetName = 'Sync')]
+    [Parameter(ParameterSetName = 'Check')]
+    [ValidateSet('Legacy', 'V2')]
+    [string]$Feed = 'Legacy'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$catalogRoot = Join-Path $repositoryRoot 'catalog'
-$snapshotManifestPath = Join-Path $repositoryRoot 'catalog.snapshot.json'
+$catalogDirectoryName = if ($Feed -ceq 'V2') { 'catalog-v2' } else { 'catalog' }
+$snapshotManifestName = if ($Feed -ceq 'V2') {
+    'catalog-v2.snapshot.json'
+}
+else {
+    'catalog.snapshot.json'
+}
+$sourceCatalogPath = if ($Feed -ceq 'V2') { 'v2/catalog.json' } else { 'catalog.json' }
+$catalogRoot = Join-Path $repositoryRoot $catalogDirectoryName
+$snapshotManifestPath = Join-Path $repositoryRoot $snapshotManifestName
 $smokeProject = Join-Path $repositoryRoot 'tests\Nfg.Store.Core.Smoke\Nfg.Store.Core.Smoke.csproj'
 $sourceRepository = 'https://github.com/Aneonfas/nfg-hub-catalog'
 $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
@@ -82,6 +95,30 @@ function Assert-SafeCatalogPath {
     }
 }
 
+function Assert-CatalogIndexPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    Assert-SafeCatalogPath -Path $Path
+    if ($Path.Split('/')[-1] -cne 'catalog.json') {
+        throw "Catalog index path must end with 'catalog.json': '$Path'."
+    }
+}
+
+function Get-SnapshotCatalogPath {
+    param([Parameter(Mandatory)]$Manifest)
+
+    if ($Manifest.source.PSObject.Properties.Name -notcontains 'catalogPath') {
+        return 'catalog.json'
+    }
+
+    if ($Manifest.source.catalogPath -isnot [string]) {
+        throw 'Bundled catalog snapshot source catalogPath is invalid.'
+    }
+
+    Assert-CatalogIndexPath -Path $Manifest.source.catalogPath
+    return $Manifest.source.catalogPath
+}
+
 function Get-OrdinalSortedPaths {
     param([Parameter(Mandatory)][object[]]$Paths)
 
@@ -137,13 +174,18 @@ function Export-CatalogCommit {
     param(
         [Parameter(Mandatory)][string]$SourceRoot,
         [Parameter(Mandatory)][string]$Commit,
-        [Parameter(Mandatory)][string]$StagingRoot
+        [Parameter(Mandatory)][string]$StagingRoot,
+        [Parameter(Mandatory)][string]$CatalogPath
     )
+
+    Assert-CatalogIndexPath -Path $CatalogPath
+    $catalogDirectory = $CatalogPath.Substring(
+        0,
+        [Math]::Max(0, $CatalogPath.LastIndexOf('/')))
 
     $indexArchivePath = Join-Path $StagingRoot 'index.zip'
     $indexRoot = Join-Path $StagingRoot 'index'
     $archivePath = Join-Path $StagingRoot 'catalog.zip'
-    $exportRoot = Join-Path $StagingRoot 'source'
 
     $null = Invoke-Git -Root $SourceRoot -Arguments @(
         'archive',
@@ -151,18 +193,33 @@ function Export-CatalogCommit {
         "--output=$indexArchivePath",
         $Commit,
         '--',
-        'catalog.json')
+        $CatalogPath)
     [System.IO.Compression.ZipFile]::ExtractToDirectory($indexArchivePath, $indexRoot)
-    $managedPaths = Get-ManagedCatalogPaths -IndexPath (Join-Path $indexRoot 'catalog.json')
+    $managedPaths = Get-ManagedCatalogPaths -IndexPath (Join-Path $indexRoot $CatalogPath)
+    $sourcePaths = [string[]]@($managedPaths | ForEach-Object {
+            if ([string]::IsNullOrEmpty($catalogDirectory)) {
+                $_
+            }
+            else {
+                "$catalogDirectory/$_"
+            }
+        })
 
     $archiveArguments = @(
         'archive',
         '--format=zip',
         "--output=$archivePath",
         $Commit,
-        '--') + $managedPaths
+        '--') + $sourcePaths
     $null = Invoke-Git -Root $SourceRoot -Arguments $archiveArguments
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $exportRoot)
+    $archiveRoot = Join-Path $StagingRoot 'source-archive'
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $archiveRoot)
+    $exportRoot = if ([string]::IsNullOrEmpty($catalogDirectory)) {
+        $archiveRoot
+    }
+    else {
+        Join-Path $archiveRoot $catalogDirectory
+    }
 
     $actualPaths = @(Get-OrdinalSortedPaths -Paths @(
             Get-ChildItem -LiteralPath $exportRoot -Recurse -Force -File | ForEach-Object {
@@ -178,6 +235,7 @@ function Export-CatalogCommit {
     return [pscustomobject]@{
         Root = $exportRoot
         Paths = [string[]]$managedPaths
+        SourcePaths = $sourcePaths
     }
 }
 
@@ -224,6 +282,11 @@ function Assert-SnapshotManifest {
         $null -eq $Manifest.files -or
         $Manifest.files -is [string]) {
         throw 'Bundled catalog snapshot manifest has invalid metadata.'
+    }
+
+    $manifestCatalogPath = Get-SnapshotCatalogPath -Manifest $Manifest
+    if ($manifestCatalogPath -cne $sourceCatalogPath) {
+        throw "Bundled catalog snapshot belongs to '$manifestCatalogPath', not '$sourceCatalogPath'."
     }
 
     $files = @($Manifest.files)
@@ -358,14 +421,24 @@ if ($Sync) {
     }
 
     $sourceRoot = Assert-GitRepositoryRoot -Root $AuthoritativeRoot
+    Assert-CatalogIndexPath -Path $sourceCatalogPath
     $hubSnapshotChanges = @(Invoke-Git -Root $repositoryRoot -Arguments @(
-            'status', '--porcelain=v1', '--', 'catalog', 'catalog.snapshot.json'))
+            'status', '--porcelain=v1', '--', $catalogDirectoryName, $snapshotManifestName))
     if ($hubSnapshotChanges.Count -ne 0) {
         throw 'Commit or restore the current bundled catalog snapshot before synchronizing it.'
     }
 
-    $currentSnapshotManifest = Read-SnapshotManifest
-    Assert-CatalogMatchesManifest -Root $catalogRoot -Manifest $currentSnapshotManifest
+    $catalogExists = Test-Path -LiteralPath $catalogRoot -PathType Container
+    $manifestExists = Test-Path -LiteralPath $snapshotManifestPath -PathType Leaf
+    if ($catalogExists -ne $manifestExists) {
+        throw 'The bundled catalog and its snapshot manifest must either both exist or both be absent.'
+    }
+
+    $currentSnapshotManifest = $null
+    if ($catalogExists) {
+        $currentSnapshotManifest = Read-SnapshotManifest
+        Assert-CatalogMatchesManifest -Root $catalogRoot -Manifest $currentSnapshotManifest
+    }
 
     $sourceCommit = @(Invoke-Git -Root $sourceRoot -Arguments @('rev-parse', 'HEAD'))[0].Trim()
     if ($sourceCommit -cnotmatch '^[0-9a-f]{40}$') {
@@ -377,9 +450,10 @@ if ($Sync) {
         $export = Export-CatalogCommit `
             -SourceRoot $sourceRoot `
             -Commit $sourceCommit `
-            -StagingRoot $stagingRoot
+            -StagingRoot $stagingRoot `
+            -CatalogPath $sourceCatalogPath
 
-        $sourceStatusArguments = @('status', '--porcelain=v1', '--') + $export.Paths
+        $sourceStatusArguments = @('status', '--porcelain=v1', '--') + $export.SourcePaths
         $sourceChanges = @(Invoke-Git `
                 -Root $sourceRoot `
                 -Arguments $sourceStatusArguments)
@@ -403,6 +477,7 @@ if ($Sync) {
             source = [ordered]@{
                 repository = $sourceRepository
                 commit = $sourceCommit
+                catalogPath = $sourceCatalogPath
             }
             files = @($records)
         }
@@ -413,9 +488,13 @@ if ($Sync) {
         $validatedManifest = Get-Content -LiteralPath $stagedManifestPath -Raw | ConvertFrom-Json
         Assert-CatalogMatchesManifest -Root $export.Root -Manifest $validatedManifest
 
-        $currentCatalogRecords = [string[]]@($currentSnapshotManifest.files | ForEach-Object {
-                "$($_.path)`0$($_.sha256)"
-            })
+        [string[]]$currentCatalogRecords = @()
+        if ($null -ne $currentSnapshotManifest) {
+            $currentCatalogRecords = [string[]]@(
+                $currentSnapshotManifest.files | ForEach-Object {
+                    "$($_.path)`0$($_.sha256)"
+                })
+        }
         $stagedCatalogRecords = [string[]]@($validatedManifest.files | ForEach-Object {
                 "$($_.path)`0$($_.sha256)"
             })
@@ -439,8 +518,10 @@ if ($Sync) {
         $oldManifestBackedUp = $false
         try {
             if (-not $catalogAlreadyCurrent) {
-                Move-Item -LiteralPath $catalogRoot -Destination $backupCatalogRoot
-                $oldCatalogBackedUp = $true
+                if (Test-Path -LiteralPath $catalogRoot -PathType Container) {
+                    Move-Item -LiteralPath $catalogRoot -Destination $backupCatalogRoot
+                    $oldCatalogBackedUp = $true
+                }
                 Move-Item -LiteralPath $export.Root -Destination $catalogRoot
                 $newCatalogPromoted = $true
             }
@@ -478,6 +559,7 @@ if ($Sync) {
 
         [pscustomobject]@{
             Mode = 'Sync'
+            Feed = $Feed
             SourceCommit = $sourceCommit
             FileCount = $records.Count
         }
@@ -503,7 +585,8 @@ if (-not [string]::IsNullOrWhiteSpace($AuthoritativeRoot)) {
         $export = Export-CatalogCommit `
             -SourceRoot $sourceRoot `
             -Commit $sourceCommit `
-            -StagingRoot $stagingRoot
+            -StagingRoot $stagingRoot `
+            -CatalogPath (Get-SnapshotCatalogPath -Manifest $snapshotManifest)
         Assert-CatalogMatchesManifest -Root $export.Root -Manifest $snapshotManifest
     }
     finally {
@@ -513,6 +596,7 @@ if (-not [string]::IsNullOrWhiteSpace($AuthoritativeRoot)) {
 
 [pscustomobject]@{
     Mode = 'Check'
+    Feed = $Feed
     SourceCommit = $snapshotManifest.source.commit
     FileCount = @($snapshotManifest.files).Count
 }

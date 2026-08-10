@@ -145,19 +145,11 @@ transaction rules as the recommended action.
 
 ## Catalog delivery
 
-The primary index is published at
-`https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/catalog.json`.
-This root endpoint is the Product Manifest schema-v1 feed: every product
-manifest it references remains schema v1 so the released Hub 0.1.1 continues
-receiving current product releases. The Hub accepts Product Manifest v2, but no
-public v2 product is consumed in this stage; rollout fixtures remain synthetic.
-A future `/v2/catalog.json`
-endpoint will reference a separate `/v2/products/` tree. That rollout remains
-out of scope here: the app still reads the legacy root endpoint and uses the
-existing cache and bundled-catalog namespace. When a separate v2 endpoint is
-introduced, it must also receive a separate cache/bundled namespace so legacy
-fallback content cannot be replaced or misread. Root-referenced product files
-must never be repurposed as v2 manifests.
+Hub 0.2.0 reads
+`https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/v2/catalog.json`.
+This endpoint references Russian and Spanish Product Manifest v2 variants and
+the existing Forge Helper. The legacy root endpoint remains schema v1 for Hub
+0.1.1 and its product files are not repurposed as v2 manifests.
 
 At startup the app downloads the index and every referenced product manifest,
 validates the complete set, and only then replaces cached files. The catalog
@@ -170,23 +162,24 @@ catalog. When it is disabled, startup performs no catalog network request and
 loads the last validated cache, then the bundled catalog. The setting is stored
 atomically in `%LOCALAPPDATA%\NFG\Hub\state\settings.json`.
 
-The cache lives under `%LOCALAPPDATA%\NFG\Hub\cache\catalog`. On the first Hub
+The Hub 0.2.0 cache lives under `%LOCALAPPDATA%\NFG\Hub\cache\catalog-v2`.
+The old `%LOCALAPPDATA%\NFG\Hub\cache\catalog` feed cache remains separate. On the first Hub
 startup, an existing `%LOCALAPPDATA%\NFG\Store` tree is copied atomically into
 the new location. The legacy tree remains unchanged as a migration backup.
 
 ## Bundled catalog state
 
 [`Aneonfas/nfg-hub-catalog`](https://github.com/Aneonfas/nfg-hub-catalog) is
-the authoritative catalog. The Hub repository's `catalog/` directory is a
-bundled fallback snapshot of exactly the index and product manifests referenced
-by the legacy root endpoint. `catalog.snapshot.json` pins the authoritative
-commit and the SHA-256 of every bundled runtime file.
+the authoritative catalog. Hub 0.2.0 uses `catalog-v2/` as its bundled fallback;
+`catalog-v2.snapshot.json` pins the source path, authoritative commit, and
+SHA-256 of every runtime file. The legacy `catalog/` snapshot and lock remain
+available for reproducibility of Hub 0.1.1.
 
-`scripts/catalog-snapshot.ps1 -Sync` reads committed Git blobs from the local
+`scripts/catalog-snapshot.ps1 -Sync -Feed V2` reads committed Git blobs from the local
 authoritative checkout, validates the complete staged catalog through
 `CatalogService`, and promotes only those runtime files and their lock with
 rollback on failure. `-Check` is offline and verifies the exact file set and
-hashes; it runs at the start of `scripts/verify.ps1`, so CI and release builds
+hashes; `scripts/verify.ps1` checks both legacy and v2 snapshots, so CI and release builds
 reject uncontrolled drift. A later authoritative `main` update does not
 invalidate an older Hub tag because each Hub commit remains pinned to its exact
 source commit.

@@ -20,8 +20,8 @@ run.
    ```powershell
    git switch main
    git pull --ff-only
-   git tag -a v0.1.1 -m "NFG Hub 0.1.1"
-   git push origin v0.1.1
+   git tag -a v0.2.0 -m "NFG Hub 0.2.0"
+   git push origin v0.2.0
    ```
 
 4. The release workflow verifies that the tag is annotated, belongs to `main`,
@@ -33,7 +33,7 @@ run.
    and attestation before publishing the draft manually.
 
 The workflow can be rerun from GitHub's run page, or dispatched explicitly for
-an existing tag with `gh workflow run release.yml --ref v0.1.1`. A manual
+an existing tag with `gh workflow run release.yml --ref v0.2.0`. A manual
 dispatch from a branch is rejected. The workflow may reuse assets only while
 the release is still a draft and only when their digests are identical. It
 refuses to replace different bytes or any asset in a published release.
@@ -52,12 +52,9 @@ the release workflow; the next one should become the current **Latest** release.
 
 Product metadata is authored in the sibling `nfg-hub-catalog` repository. Its
 root `catalog.json` is the legacy Product Manifest schema-v1 feed consumed by
-Hub 0.1.1; referenced root products must remain readable by that release and
-continue receiving product updates. A separate `/v2/catalog.json`, referencing
-a separate `/v2/products/` tree, is reserved for the future installation-slot
-rollout and does not exist yet. Root-referenced product files must never be
-converted to v2. The bundled `catalog/` in this repository is only an offline
-snapshot of the root endpoint.
+Hub 0.1.1. Hub 0.2.0 consumes `/v2/catalog.json` and uses the separate
+`catalog-v2/` bundled snapshot. Root-referenced product files must never be
+converted to v2.
 
 Commit and validate the authoritative change first. Then, from the NFG Hub
 checkout, synchronize the exact committed blobs:
@@ -67,10 +64,12 @@ dotnet restore .\Nfg.Store.slnx
 
 .\scripts\catalog-snapshot.ps1 `
     -Sync `
+    -Feed V2 `
     -AuthoritativeRoot ..\nfg-hub-catalog
 
 .\scripts\catalog-snapshot.ps1 `
     -Check `
+    -Feed V2 `
     -AuthoritativeRoot ..\nfg-hub-catalog
 
 .\scripts\verify.ps1 -Configuration Release
@@ -79,8 +78,8 @@ dotnet restore .\Nfg.Store.slnx
 `-Sync` does not fetch, checkout, commit, push, tag, or publish. It refuses
 uncommitted authoritative runtime files and existing uncommitted snapshot
 changes, exports the source repository's exact `HEAD` blobs, validates them with
-the Hub contract, and writes `catalog.snapshot.json` with the source commit and
-file hashes. Review and commit the Hub snapshot separately. Never edit bundled
+the Hub contract, and writes `catalog-v2.snapshot.json` with the source path,
+commit, and file hashes. Review and commit the Hub snapshot separately. Never edit bundled
 product manifests as a second authoritative copy.
 
 CI uses `-Check` without a sibling checkout or network access. This verifies the
@@ -116,6 +115,6 @@ After GitHub Actions creates an attestation, a downloaded official ZIP can be
 verified with GitHub CLI:
 
 ```powershell
-gh attestation verify .\NFG-Hub-v0.1.1-win-x64.zip `
+gh attestation verify .\NFG-Hub-v0.2.0-win-x64.zip `
     --repo Aneonfas/nfg-hub
 ```

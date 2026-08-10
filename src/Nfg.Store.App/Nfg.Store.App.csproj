@@ -7,7 +7,7 @@
     <AssemblyTitle>NFG Hub</AssemblyTitle>
     <Product>NFG Hub</Product>
     <Description>NFG Hub desktop application.</Description>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
     <ApplicationIcon>Assets\NfgHub.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -23,8 +23,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\catalog\**\*">
-      <Link>catalog\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    <Content Include="..\..\catalog-v2\**\*">
+      <Link>catalog-v2\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
