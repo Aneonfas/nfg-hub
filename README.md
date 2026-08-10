@@ -5,6 +5,13 @@ Hub 0.2.0 adds Russian and Spanish Anvil Empires localization variants.
 
 The current repository contains a working Windows Hub shell and versioned catalog/package contracts. The app loads the official catalog over HTTPS, keeps a validated local cache, downloads ZIP-only packages, detects Steam installations, and applies declared managed files without launching external installers.
 
+The current development branch offers the Hub interface in English, Russian,
+Spanish, German, French, Brazilian Portuguese, Simplified Chinese, Japanese,
+Korean, and Turkish. Localization families are reconciled with their actual
+managed files at startup. Their single Remove action can delete the language
+selected in the list or, when other languages are present, every language in
+the family.
+
 Official catalog: <https://github.com/Aneonfas/nfg-hub-catalog>
 
 ## Run

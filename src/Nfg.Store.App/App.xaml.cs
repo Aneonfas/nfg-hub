@@ -97,6 +97,45 @@ public partial class App : Application
                     requiredProductIds: requiredProductIds);
             var migratedStates = await new InstallationStateMigrator(stateStore)
                 .MigrateAsync(catalogResult.Catalog);
+            var installationInventories = new Dictionary<string, ManagedFamilyInventory>(
+                StringComparer.Ordinal);
+            foreach (var family in catalogResult.Catalog.Products
+                         .Where(product => product.FamilyId is not null)
+                         .GroupBy(product => product.FamilyId!, StringComparer.OrdinalIgnoreCase)
+                         .Where(group => group.Count() > 1))
+            {
+                var products = family.ToArray();
+                var installationKey = ProductInstallationKey.FromManifest(products[0]);
+                var installedState = migratedStates.FirstOrDefault(state =>
+                    string.Equals(
+                        state.InstallationKey,
+                        installationKey,
+                        StringComparison.Ordinal));
+                if (installedState is null &&
+                    !products.Any(product => libraryProductIds.Contains(product.Id)))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    installationInventories[installationKey] =
+                        await installationCoordinator.ReconcileFamilyAsync(products);
+                }
+                catch (Exception exception)
+                {
+                    installationInventories[installationKey] =
+                        ManagedFamilyInventory.FromState(installationKey, installedState);
+                    startupWarning = AppendWarning(
+                        startupWarning,
+                        localization.Format(
+                            "Startup.ReconcileWarning",
+                            products[0].Display.Title,
+                            exception.Message));
+                }
+            }
+
+            migratedStates = await stateStore.LoadAllAsync();
             var installedStates = migratedStates.ToDictionary(
                 state => state.InstallationKey!,
                 state => (InstalledProductState?)state,
@@ -120,7 +159,8 @@ public partial class App : Application
                     settings,
                     settingsStore,
                     installedStates,
-                    libraryProductIds)
+                    libraryProductIds,
+                    installationInventories)
             };
 
             MainWindow = window;
@@ -170,4 +210,9 @@ public partial class App : Application
         }
         base.OnExit(e);
     }
+
+    private static string AppendWarning(string? current, string warning) =>
+        string.IsNullOrWhiteSpace(current)
+            ? warning
+            : $"{current}\n\n{warning}";
 }

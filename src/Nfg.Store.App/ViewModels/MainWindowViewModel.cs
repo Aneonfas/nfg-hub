@@ -25,7 +25,8 @@ public sealed class MainWindowViewModel : ObservableObject
         AppSettings settings,
         AppSettingsStore settingsStore,
         IReadOnlyDictionary<string, InstalledProductState?> installedStates,
-        IReadOnlySet<string> libraryProductIds)
+        IReadOnlySet<string> libraryProductIds,
+        IReadOnlyDictionary<string, ManagedFamilyInventory>? installationInventories = null)
     {
         var catalog = catalogResult.Catalog;
         CatalogName = catalog.DisplayName;
@@ -36,6 +37,13 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             var installationKey = ProductInstallationKey.FromManifest(products[0]);
             installedStates.TryGetValue(installationKey, out var installedState);
+            ManagedFamilyInventory? installationInventory = null;
+            if (installationInventories is not null)
+            {
+                installationInventories.TryGetValue(
+                    installationKey,
+                    out installationInventory);
+            }
             var detectionProduct = products.FirstOrDefault(product =>
                     string.Equals(
                         product.Id,
@@ -51,7 +59,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 libraryStore,
                 installedState,
                 products.Any(product => libraryProductIds.Contains(product.Id)),
-                gameInstallation?.BuildId));
+                gameInstallation?.BuildId,
+                installationInventory));
         }
         _productStates = productStates;
 

@@ -16,10 +16,11 @@ public sealed class ProductStateViewModel : PageViewModel
     private readonly AsyncRelayCommand _applyVariantCommand;
     private readonly AsyncRelayCommand _installCommand;
     private readonly AsyncRelayCommand _updateCommand;
-    private readonly AsyncRelayCommand _removeFromDeviceCommand;
-    private readonly AsyncRelayCommand _removeFromLibraryCommand;
+    private readonly AsyncRelayCommand _removeCommand;
     private readonly AsyncRelayCommand _toggleProductCommand;
+    private readonly IProductDeletionPrompt _deletionPrompt;
     private readonly string _installationKey;
+    private ManagedFamilyInventory _inventory;
     private ProductManifest _manifest;
     private ProductViewModel _product;
     private ProductVariantOptionViewModel _selectedVariant;
@@ -43,14 +44,17 @@ public sealed class ProductStateViewModel : PageViewModel
         ProductLibraryStore libraryStore,
         InstalledProductState? installedState,
         bool isInLibrary,
-        string? detectedGameBuildId = null)
+        string? detectedGameBuildId = null,
+        ManagedFamilyInventory? inventory = null)
         : this(
             CreateVariantOptions(manifests),
             new ProductInstallationOperations(installationCoordinator),
             libraryStore,
             installedState,
             isInLibrary,
-            detectedGameBuildId)
+            detectedGameBuildId,
+            inventory,
+            deletionPrompt: null)
     {
     }
 
@@ -62,14 +66,17 @@ public sealed class ProductStateViewModel : PageViewModel
         ProductLibraryStore libraryStore,
         InstalledProductState? installedState,
         bool isInLibrary,
-        string? detectedGameBuildId = null)
+        string? detectedGameBuildId = null,
+        ManagedFamilyInventory? inventory = null)
         : this(
             CreateSingleVariantOption(product, manifest),
             new ProductInstallationOperations(installationCoordinator),
             libraryStore,
             installedState,
             isInLibrary,
-            detectedGameBuildId)
+            detectedGameBuildId,
+            inventory,
+            deletionPrompt: null)
     {
     }
 
@@ -79,14 +86,18 @@ public sealed class ProductStateViewModel : PageViewModel
         ProductLibraryStore libraryStore,
         InstalledProductState? installedState,
         bool isInLibrary,
-        string? detectedGameBuildId = null)
+        string? detectedGameBuildId = null,
+        ManagedFamilyInventory? inventory = null,
+        IProductDeletionPrompt? deletionPrompt = null)
         : this(
             CreateVariantOptions(manifests),
             installationCoordinator,
             libraryStore,
             installedState,
             isInLibrary,
-            detectedGameBuildId)
+            detectedGameBuildId,
+            inventory,
+            deletionPrompt)
     {
     }
 
@@ -96,7 +107,9 @@ public sealed class ProductStateViewModel : PageViewModel
         ProductLibraryStore libraryStore,
         InstalledProductState? installedState,
         bool isInLibrary,
-        string? detectedGameBuildId)
+        string? detectedGameBuildId,
+        ManagedFamilyInventory? inventory,
+        IProductDeletionPrompt? deletionPrompt)
         : base(variants[0].Product.Title)
     {
         AvailableVariants = variants;
@@ -105,6 +118,10 @@ public sealed class ProductStateViewModel : PageViewModel
         _libraryStore = libraryStore;
         _installationKey = ProductInstallationKey.FromManifest(variants[0].Manifest);
         _managedState = installedState;
+        _inventory = inventory ?? ManagedFamilyInventory.FromState(
+            _installationKey,
+            installedState);
+        _deletionPrompt = deletionPrompt ?? new ProductDeletionPrompt();
         _isInLibrary = isInLibrary || installedState is not null;
         _detectedGameBuildId = detectedGameBuildId;
         _operationStatus = string.Empty;
@@ -133,13 +150,9 @@ public sealed class ProductStateViewModel : PageViewModel
             ApplySelectedAsync,
             () => CanUpdate,
             HandleUnexpectedOperationError);
-        _removeFromDeviceCommand = new AsyncRelayCommand(
-            RemoveFromDeviceAsync,
-            () => CanRemoveFromDevice,
-            HandleUnexpectedOperationError);
-        _removeFromLibraryCommand = new AsyncRelayCommand(
-            RemoveFromLibraryAsync,
-            () => CanRemoveFromLibrary,
+        _removeCommand = new AsyncRelayCommand(
+            RemoveAsync,
+            () => CanRemove,
             HandleUnexpectedOperationError);
         _toggleProductCommand = new AsyncRelayCommand(
             ToggleProductAsync,
@@ -149,8 +162,7 @@ public sealed class ProductStateViewModel : PageViewModel
         ApplyVariantCommand = _applyVariantCommand;
         InstallCommand = _installCommand;
         UpdateCommand = _updateCommand;
-        RemoveFromDeviceCommand = _removeFromDeviceCommand;
-        RemoveFromLibraryCommand = _removeFromLibraryCommand;
+        RemoveCommand = _removeCommand;
         ToggleProductCommand = _toggleProductCommand;
     }
 
@@ -170,9 +182,12 @@ public sealed class ProductStateViewModel : PageViewModel
 
     public ICommand UpdateCommand { get; }
 
-    public ICommand RemoveFromDeviceCommand { get; }
+    public ICommand RemoveCommand { get; }
 
-    public ICommand RemoveFromLibraryCommand { get; }
+    // Compatibility aliases for older callers; the UI exposes one delete action.
+    public ICommand RemoveFromDeviceCommand => RemoveCommand;
+
+    public ICommand RemoveFromLibraryCommand => RemoveCommand;
 
     public ICommand ToggleProductCommand { get; }
 
@@ -382,9 +397,19 @@ public sealed class ProductStateViewModel : PageViewModel
 
     public bool CanSelectVersion => !IsBusy;
 
-    public bool CanRemoveFromDevice => !IsBusy && IsInstalled;
+    public bool CanRemove =>
+        !IsBusy &&
+        IsInLibrary &&
+        (!HasMultipleVariants ||
+         _inventory.HasVariant(_selectedVariant.ProductId) ||
+         !_inventory.HasAnyInstalledVariants);
 
-    public bool CanRemoveFromLibrary => !IsBusy && IsInLibrary;
+    public bool CanRemoveFromDevice => CanRemove;
+
+    public bool CanRemoveFromLibrary => CanRemove;
+
+    public bool HasOtherInstalledVariants =>
+        _inventory.HasOtherInstalledVariant(_selectedVariant.ProductId);
 
     public bool CanToggleProduct => !IsBusy && IsInstalled;
 
@@ -616,7 +641,16 @@ public sealed class ProductStateViewModel : PageViewModel
                 selectedManifest,
                 previousState?.ProductId,
                 progress);
-            SetManagedState(result.State);
+            try
+            {
+                ApplyInventory(
+                    await _installationCoordinator.ReconcileFamilyAsync(_manifests),
+                    preferManagedVariant: true);
+            }
+            catch
+            {
+                SetManagedState(result.State);
+            }
             await _libraryStore.AddAsync(selectedManifest.Id);
             SetLibraryState(isInLibrary: true);
             OperationProgress = 100;
@@ -688,10 +722,15 @@ public sealed class ProductStateViewModel : PageViewModel
         }
     }
 
-    private async Task RemoveFromDeviceAsync()
+    private async Task RemoveAsync()
     {
-        var expectedState = _managedState;
-        if (expectedState is null)
+        var selectedProductId = _selectedVariant.ProductId;
+        var selectedVariantLabel = SelectedVariantLabel;
+        var choice = _deletionPrompt.Confirm(
+            selectedVariantLabel,
+            HasOtherInstalledVariants,
+            HasMultipleVariants);
+        if (choice == ProductDeletionChoice.Cancel)
         {
             return;
         }
@@ -699,61 +738,85 @@ public sealed class ProductStateViewModel : PageViewModel
         _operationHasError = false;
         IsBusy = true;
         OperationProgress = 0;
-        OperationStatus = Text.Get("State.CheckingFiles");
+        var scope = choice == ProductDeletionChoice.AllVariants
+            ? ManagedVariantRemovalScope.AllVariants
+            : ManagedVariantRemovalScope.SelectedVariant;
+        OperationStatus = scope == ManagedVariantRemovalScope.AllVariants
+            ? Text.Get("State.RemovingAllLanguages")
+            : Text.Format("State.RemovingSelectedLanguage", selectedVariantLabel);
 
         try
         {
-            await _installationCoordinator.RemoveFromDeviceAsync(
-                _installationKey,
-                expectedState.ProductId);
-            SetManagedState(null);
-            OperationStatus = Text.Get("State.RemovedDevice");
-        }
-        catch (Exception exception)
-        {
-            await HandleOperationErrorAsync(exception, Text.Get("State.RemovalStopped"));
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task RemoveFromLibraryAsync()
-    {
-        _operationHasError = false;
-        IsBusy = true;
-        OperationProgress = 0;
-        OperationStatus = IsInstalled
-            ? Text.Get("State.RemovingAll")
-            : Text.Get("State.RemovingLibrary");
-
-        try
-        {
-            var expectedState = _managedState;
-            if (expectedState is not null)
+            if (!HasMultipleVariants)
             {
-                await _installationCoordinator.RemoveFromDeviceAsync(
-                    _installationKey,
-                    expectedState.ProductId);
-                SetManagedState(null);
+                if (_managedState is { } standaloneState)
+                {
+                    await _installationCoordinator.RemoveFromDeviceAsync(
+                        _installationKey,
+                        standaloneState.ProductId);
+                }
+
+                await _libraryStore.RemoveAsync(selectedProductId);
+                _inventory = ManagedFamilyInventory.FromState(_installationKey, state: null);
+                SetManagedState(state: null);
+                SetLibraryState(isInLibrary: false);
+                OperationStatus = Text.Get("State.RemovedProduct");
+                return;
             }
 
-            foreach (var productId in _manifests
-                         .Select(manifest => manifest.Id)
-                         .Distinct(StringComparer.Ordinal))
+            if (!_inventory.HasAnyInstalledVariants)
             {
-                await _libraryStore.RemoveAsync(productId);
+                foreach (var productId in _manifests
+                             .Select(manifest => manifest.Id)
+                             .Distinct(StringComparer.Ordinal))
+                {
+                    await _libraryStore.RemoveAsync(productId);
+                }
+
+                SetLibraryState(isInLibrary: false);
+                OperationStatus = Text.Get("State.RemovedProduct");
+                return;
             }
 
-            SetLibraryState(isInLibrary: false);
-            OperationStatus = string.Empty;
+            var inventory = await _installationCoordinator.RemoveFamilyVariantAsync(
+                _manifests,
+                selectedProductId,
+                scope);
+            ApplyInventory(inventory, preferManagedVariant: true);
+
+            if (scope == ManagedVariantRemovalScope.AllVariants ||
+                !inventory.HasAnyInstalledVariants)
+            {
+                foreach (var productId in _manifests
+                             .Select(manifest => manifest.Id)
+                             .Distinct(StringComparer.Ordinal))
+                {
+                    await _libraryStore.RemoveAsync(productId);
+                }
+
+                SetLibraryState(isInLibrary: false);
+            }
+            else
+            {
+                await _libraryStore.RemoveAsync(selectedProductId);
+                foreach (var remaining in inventory.Variants.Where(variant =>
+                             variant.IsInstalled))
+                {
+                    await _libraryStore.AddAsync(remaining.ProductId);
+                }
+
+                SetLibraryState(isInLibrary: true);
+            }
+
+            OperationStatus = scope == ManagedVariantRemovalScope.AllVariants
+                ? Text.Get("State.RemovedAllLanguages")
+                : Text.Format("State.RemovedSelectedLanguage", selectedVariantLabel);
         }
         catch (Exception exception)
         {
             await HandleOperationErrorAsync(
                 exception,
-                Text.Get("State.LibraryRemovalStopped"),
+                Text.Get("State.RemovalStopped"),
                 reloadLibrary: true);
         }
         finally
@@ -994,10 +1057,11 @@ public sealed class ProductStateViewModel : PageViewModel
         var actualOutcome = Text.Get("State.ActualReadFailed");
         try
         {
-            var actualState = await _installationCoordinator.LoadInstalledStateAsync(
-                _installationKey,
+            var inventory = await _installationCoordinator.ReconcileFamilyAsync(
+                _manifests,
                 CancellationToken.None);
-            SetManagedState(actualState);
+            var actualState = inventory.State;
+            ApplyInventory(inventory, preferManagedVariant: true);
             actualOutcome = actualState is null
                 ? Text.Get("State.ActualNotInstalled")
                 : Text.Format(
@@ -1051,6 +1115,8 @@ public sealed class ProductStateViewModel : PageViewModel
         OnPropertyChanged(nameof(CanSelectVersion));
         OnPropertyChanged(nameof(CanRemoveFromDevice));
         OnPropertyChanged(nameof(CanRemoveFromLibrary));
+        OnPropertyChanged(nameof(CanRemove));
+        OnPropertyChanged(nameof(HasOtherInstalledVariants));
         OnPropertyChanged(nameof(CanToggleProduct));
         OnPropertyChanged(nameof(PrimaryActionText));
         OnPropertyChanged(nameof(UpdateActionText));
@@ -1059,14 +1125,30 @@ public sealed class ProductStateViewModel : PageViewModel
         _applyVariantCommand.NotifyCanExecuteChanged();
         _installCommand.NotifyCanExecuteChanged();
         _updateCommand.NotifyCanExecuteChanged();
-        _removeFromDeviceCommand.NotifyCanExecuteChanged();
-        _removeFromLibraryCommand.NotifyCanExecuteChanged();
+        _removeCommand.NotifyCanExecuteChanged();
         _toggleProductCommand.NotifyCanExecuteChanged();
     }
 
     private void SetManagedState(InstalledProductState? state)
     {
         _managedState = state;
+        _inventory = _inventory with
+        {
+            State = state,
+            Variants = _inventory.Variants
+                .Select(variant => state is not null && variant.ProductId.Equals(
+                    state.ProductId,
+                    StringComparison.Ordinal)
+                    ? variant with
+                    {
+                        Version = state.Version,
+                        IsInstalled = true,
+                        IsEnabled = state.IsEnabled,
+                        HasRelatedArtifacts = true
+                    }
+                    : variant)
+                .ToArray()
+        };
         if (state is not null)
         {
             SetLibraryState(isInLibrary: true);
@@ -1090,6 +1172,36 @@ public sealed class ProductStateViewModel : PageViewModel
         OnPropertyChanged(nameof(ActivationStatusText));
         OnPropertyChanged(nameof(ToggleAutomationName));
         OnPropertyChanged(nameof(CatalogStatusText));
+        RefreshActionState();
+    }
+
+    private void ApplyInventory(
+        ManagedFamilyInventory inventory,
+        bool preferManagedVariant)
+    {
+        _inventory = inventory;
+        SetManagedState(inventory.State);
+        if (preferManagedVariant && inventory.State is { } state)
+        {
+            var stateVariant = AvailableVariants.FirstOrDefault(variant =>
+                variant.ProductId.Equals(state.ProductId, StringComparison.Ordinal));
+            if (stateVariant is not null && !ReferenceEquals(_selectedVariant, stateVariant))
+            {
+                _selectedVariant = stateVariant;
+                _manifest = stateVariant.Manifest;
+                _product = stateVariant.Product;
+                _detectedGameBuildId = _installationCoordinator
+                    .DetectGameInstallation(_manifest, state.GameRoot)
+                    ?.BuildId;
+                RebuildAvailableVersions(
+                    preferredVersion: state.Version,
+                    followAutomaticChoice: false);
+                NotifySelectedVariantChanged();
+            }
+        }
+
+        OnPropertyChanged(nameof(CanRemove));
+        OnPropertyChanged(nameof(HasOtherInstalledVariants));
         RefreshActionState();
     }
 

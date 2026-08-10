@@ -233,12 +233,6 @@
                                                           IsEnabled="{Binding CanToggleProduct}"
                                                           AutomationProperties.Name="{Binding ToggleAutomationName}" />
                                             </StackPanel>
-                                            <Button Margin="0,18,0,0"
-                                                    HorizontalAlignment="Stretch"
-                                                    Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="{loc:Loc Library.RemoveDevice}"
-                                                     Command="{Binding RemoveFromDeviceCommand}"
-                                                     IsEnabled="{Binding CanRemoveFromDevice}" />
                                         </StackPanel>
 
                                         <Border Height="1"
@@ -247,9 +241,9 @@
 
                                         <Button HorizontalAlignment="Stretch"
                                                 Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{loc:Loc Library.RemoveLibrary}"
-                                                Command="{Binding RemoveFromLibraryCommand}"
-                                                IsEnabled="{Binding CanRemoveFromLibrary}" />
+                                                Content="{loc:Loc Library.Remove}"
+                                                Command="{Binding RemoveCommand}"
+                                                IsEnabled="{Binding CanRemove}" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
