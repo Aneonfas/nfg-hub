@@ -27,6 +27,7 @@
                     <ComboBox Grid.Column="1"
                               ItemsSource="{Binding Languages}"
                               SelectedItem="{Binding SelectedLanguage}"
+                              Tag="{Binding SelectedLanguage}"
                               Style="{StaticResource VersionComboBoxStyle}"
                               VerticalAlignment="Center">
                         <ComboBox.ItemTemplate>

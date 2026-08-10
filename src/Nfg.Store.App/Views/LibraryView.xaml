@@ -179,6 +179,7 @@
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
                                             <ComboBox ItemsSource="{Binding AvailableVariants}"
                                                       SelectedItem="{Binding SelectedVariant, Mode=TwoWay}"
+                                                      Tag="{Binding SelectedVariant}"
                                                       IsEnabled="{Binding CanSelectVariant}"
                                                       AutomationProperties.Name="{loc:Loc Common.LanguageSelection}"
                                                       Style="{StaticResource VariantComboBoxStyle}" />
@@ -192,9 +193,12 @@
                                                        FontWeight="Bold"
                                                        Foreground="{StaticResource TextSecondaryBrush}" />
                                             <ComboBox ItemsSource="{Binding AvailableVersions}"
-                                                      SelectedItem="{Binding SelectedVersion, Mode=TwoWay}"
+                                                      SelectedValuePath="Version"
+                                                      SelectedValue="{Binding SelectedVersionValue, Mode=TwoWay}"
+                                                      Tag="{Binding SelectedVersion}"
                                                       IsEnabled="{Binding CanSelectVersion}"
                                                       AutomationProperties.Name="{loc:Loc Common.VersionSelection}"
+                                                      AutomationProperties.HelpText="{Binding SelectedVersionValue}"
                                                       Style="{StaticResource VersionComboBoxStyle}" />
                                         </StackPanel>
 
@@ -233,12 +237,6 @@
                                                           IsEnabled="{Binding CanToggleProduct}"
                                                           AutomationProperties.Name="{Binding ToggleAutomationName}" />
                                             </StackPanel>
-                                            <Button Margin="0,18,0,0"
-                                                    HorizontalAlignment="Stretch"
-                                                    Style="{StaticResource SecondaryButtonStyle}"
-                                                    Content="{loc:Loc Library.RemoveDevice}"
-                                                     Command="{Binding RemoveFromDeviceCommand}"
-                                                     IsEnabled="{Binding CanRemoveFromDevice}" />
                                         </StackPanel>
 
                                         <Border Height="1"
@@ -247,9 +245,9 @@
 
                                         <Button HorizontalAlignment="Stretch"
                                                 Style="{StaticResource SecondaryButtonStyle}"
-                                                Content="{loc:Loc Library.RemoveLibrary}"
-                                                Command="{Binding RemoveFromLibraryCommand}"
-                                                IsEnabled="{Binding CanRemoveFromLibrary}" />
+                                                Content="{loc:Loc Library.Remove}"
+                                                Command="{Binding RemoveCommand}"
+                                                IsEnabled="{Binding CanRemove}" />
                                     </StackPanel>
                                 </Grid>
                             </Border>

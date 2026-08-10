@@ -63,6 +63,71 @@ internal static class ManagedVariantInstallerSmoke
         await CheckLegacyTruncatedStageRecoveryAsync(Path.Combine(root, "legacy-truncated-stage"));
         await CheckExternalExactTargetIsPreservedAsync(Path.Combine(root, "external-exact-target"));
         await CheckUnverifiedPartialFailsClosedAsync(Path.Combine(root, "unverified-partial"));
+        await CheckLegacyLocaleInventoryReconciliationAsync(
+            Path.Combine(root, "legacy-locale-inventory"));
+    }
+
+    private static async Task CheckLegacyLocaleInventoryReconciliationAsync(string root)
+    {
+        var dataRoot = Path.Combine(root, "data");
+        var gameRoot = CreateGameRoot(root);
+        var packagesRoot = Path.Combine(root, "packages");
+        var ru = await CreateLanguagePackageAsync(
+            packagesRoot,
+            RuProductId,
+            "ru",
+            new PackageFile("ru-only.pak", RuOnlyDestination, RuOnlyPayload));
+        var es = await CreateLanguagePackageAsync(
+            packagesRoot,
+            EsProductId,
+            "es",
+            new PackageFile("es-only.pak", EsOnlyDestination, EsOnlyPayload));
+        var variants = new[]
+        {
+            new ManagedVariantPackage(ru.Product, ru.Package),
+            new ManagedVariantPackage(es.Product, es.Package)
+        };
+        var stateStore = new InstallationStateStore(dataRoot);
+        var installer = new ManagedFilesInstaller(stateStore);
+
+        await installer.InstallAsync(ru.Package, ru.Product, gameRoot);
+        await installer.SetEnabledAsync(InstallationKey, RuProductId, isEnabled: false);
+        var ruPath = ResolveManagedPath(gameRoot, RuOnlyDestination);
+        File.Move($"{ruPath}.nfg-disabled", $"{ruPath}.disabled");
+        WriteManagedFile(gameRoot, EsOnlyDestination, EsOnlyPayload);
+
+        var inventory = await installer.ReconcileFamilyAsync(variants, gameRoot, SteamBuildId);
+        AssertState(inventory.State, EsProductId, isEnabled: true);
+        Assert(inventory.Variants.Single(item => item.ProductId == RuProductId).IsInstalled,
+            "Legacy disabled RU package was not detected.");
+        Assert(inventory.Variants.Single(item => item.ProductId == EsProductId).IsEnabled,
+            "Active ES package was not selected as the factual state.");
+        Assert(File.Exists($"{ruPath}.disabled"),
+            "Legacy disabled RU package was not preserved before an explicit removal.");
+
+        inventory = await installer.RemoveFamilyVariantAsync(
+            variants,
+            gameRoot,
+            RuProductId,
+            ManagedVariantRemovalScope.SelectedVariant,
+            SteamBuildId);
+        AssertState(inventory.State, EsProductId, isEnabled: true);
+        AssertManagedPathAbsent(gameRoot, RuOnlyDestination);
+        AssertManagedFile(gameRoot, EsOnlyDestination, EsOnlyPayload, isEnabled: true);
+
+        var esPath = ResolveManagedPath(gameRoot, EsOnlyDestination);
+        File.WriteAllBytes($"{esPath}.previous-83e10db3.disabled", EsOnlyPayload);
+        inventory = await installer.RemoveFamilyVariantAsync(
+            variants,
+            gameRoot,
+            EsProductId,
+            ManagedVariantRemovalScope.AllVariants,
+            SteamBuildId);
+        Assert(inventory.State is null && !inventory.HasAnyInstalledVariants,
+            "Removing all locale variants retained an installed state.");
+        AssertManagedPathAbsent(gameRoot, EsOnlyDestination);
+        Assert(!File.Exists($"{esPath}.previous-83e10db3.disabled"),
+            "Removing all locale variants retained a previous package artifact.");
     }
 
     private static async Task CheckSameVersionRoundTripsAsync(string root)

@@ -145,7 +145,7 @@ transaction rules as the recommended action.
 
 ## Catalog delivery
 
-Hub 0.2.0 reads
+Hub 0.2.0 and later read
 `https://raw.githubusercontent.com/Aneonfas/nfg-hub-catalog/main/v2/catalog.json`.
 This endpoint references Russian and Spanish Product Manifest v2 variants and
 the existing Forge Helper. The legacy root endpoint remains schema v1 for Hub
@@ -162,7 +162,8 @@ catalog. When it is disabled, startup performs no catalog network request and
 loads the last validated cache, then the bundled catalog. The setting is stored
 atomically in `%LOCALAPPDATA%\NFG\Hub\state\settings.json`.
 
-The Hub 0.2.0 cache lives under `%LOCALAPPDATA%\NFG\Hub\cache\catalog-v2`.
+Hub 0.2.0 and later store the v2 cache under
+`%LOCALAPPDATA%\NFG\Hub\cache\catalog-v2`.
 The old `%LOCALAPPDATA%\NFG\Hub\cache\catalog` feed cache remains separate. On the first Hub
 startup, an existing `%LOCALAPPDATA%\NFG\Store` tree is copied atomically into
 the new location. The legacy tree remains unchanged as a migration backup.
@@ -170,7 +171,8 @@ the new location. The legacy tree remains unchanged as a migration backup.
 ## Bundled catalog state
 
 [`Aneonfas/nfg-hub-catalog`](https://github.com/Aneonfas/nfg-hub-catalog) is
-the authoritative catalog. Hub 0.2.0 uses `catalog-v2/` as its bundled fallback;
+the authoritative catalog. Hub 0.2.0 and later use `catalog-v2/` as their
+bundled fallback;
 `catalog-v2.snapshot.json` pins the source path, authoritative commit, and
 SHA-256 of every runtime file. The legacy `catalog/` snapshot and lock remain
 available for reproducibility of Hub 0.1.1.

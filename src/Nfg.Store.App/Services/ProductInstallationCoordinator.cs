@@ -171,6 +171,56 @@ public sealed class ProductInstallationCoordinator(
         CancellationToken cancellationToken = default) =>
         stateStore.LoadAsync(installationKey, cancellationToken);
 
+    public async Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+        IReadOnlyList<ProductManifest> products,
+        CancellationToken cancellationToken = default)
+    {
+        var family = ValidateFamily(products);
+        var installationKey = ProductInstallationKey.FromManifest(family[0]);
+        var currentState = await stateStore.LoadAsync(installationKey, cancellationToken);
+        var installation = SelectInstallation(
+            family.FirstOrDefault(product => product.Id.Equals(
+                currentState?.ProductId,
+                StringComparison.Ordinal)) ?? family[0],
+            currentState?.GameRoot);
+        var packages = await LoadFamilyPackagesAsync(
+            family,
+            currentState,
+            cancellationToken);
+        return await _installer.ReconcileFamilyAsync(
+            packages,
+            installation.GameRoot,
+            installation.BuildId,
+            cancellationToken);
+    }
+
+    public async Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+        IReadOnlyList<ProductManifest> products,
+        string selectedProductId,
+        ManagedVariantRemovalScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        var family = ValidateFamily(products);
+        var installationKey = ProductInstallationKey.FromManifest(family[0]);
+        var currentState = await stateStore.LoadAsync(installationKey, cancellationToken);
+        var installation = SelectInstallation(
+            family.FirstOrDefault(product => product.Id.Equals(
+                currentState?.ProductId,
+                StringComparison.Ordinal)) ?? family[0],
+            currentState?.GameRoot);
+        var packages = await LoadFamilyPackagesAsync(
+            family,
+            currentState,
+            cancellationToken);
+        return await _installer.RemoveFamilyVariantAsync(
+            packages,
+            installation.GameRoot,
+            selectedProductId,
+            scope,
+            installation.BuildId,
+            cancellationToken);
+    }
+
     public Task RemoveFromDeviceAsync(
         string productId,
         CancellationToken cancellationToken = default) =>
@@ -245,6 +295,77 @@ public sealed class ProductInstallationCoordinator(
                 outcome.State,
                 actualStateUnreadable: !outcome.IsReadable);
         }
+    }
+
+    private async Task<IReadOnlyList<ManagedVariantPackage>> LoadFamilyPackagesAsync(
+        IReadOnlyList<ProductManifest> products,
+        InstalledProductState? currentState,
+        CancellationToken cancellationToken)
+    {
+        var packageManifests = new List<ProductManifest>(products.Count + 1);
+        foreach (var product in products)
+        {
+            packageManifests.Add(product);
+            if (currentState is null ||
+                !product.Id.Equals(currentState.ProductId, StringComparison.Ordinal) ||
+                product.Release.Version.Equals(currentState.Version, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var installedRelease = ProductReleaseCatalog
+                .GetAvailableReleases(product)
+                .FirstOrDefault(release => release.Version.Equals(
+                    currentState.Version,
+                    StringComparison.Ordinal));
+            if (installedRelease is not null)
+            {
+                packageManifests.Add(ProductReleaseCatalog.CreateManifestForRelease(
+                    product,
+                    installedRelease));
+            }
+        }
+
+        var packages = new List<ManagedVariantPackage>(packageManifests.Count);
+        foreach (var product in packageManifests)
+        {
+            var archivePath = await _downloader.DownloadAsync(
+                product,
+                _downloadRoot,
+                progress: null,
+                cancellationToken);
+            var package = await _archiveService.ValidateAsync(
+                archivePath,
+                product,
+                cancellationToken);
+            packages.Add(new ManagedVariantPackage(product, package));
+        }
+
+        return packages;
+    }
+
+    private static IReadOnlyList<ProductManifest> ValidateFamily(
+        IReadOnlyList<ProductManifest> products)
+    {
+        ArgumentNullException.ThrowIfNull(products);
+        if (products.Count == 0)
+        {
+            throw new ArgumentException(
+                "A product family must contain at least one product.",
+                nameof(products));
+        }
+
+        var installationKey = ProductInstallationKey.FromManifest(products[0]);
+        if (products.Any(product =>
+                !ProductInstallationKey.FromManifest(product).Equals(
+                    installationKey,
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ProductInstallationException(
+                "Product family members do not share one installation slot.");
+        }
+
+        return products;
     }
 
     private async Task<PersistedOutcome> ReadActualOutcomeAsync(

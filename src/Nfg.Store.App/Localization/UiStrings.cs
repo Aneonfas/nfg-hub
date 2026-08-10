@@ -1,6 +1,6 @@
 namespace Nfg.Store.App.Localization;
 
-internal static class UiStrings
+internal static partial class UiStrings
 {
     public static string Get(string language, string key)
     {
@@ -8,6 +8,13 @@ internal static class UiStrings
         {
             "ru" => Russian,
             "es" => Spanish,
+            "de" => German,
+            "fr" => French,
+            "pt-br" => BrazilianPortuguese,
+            "zh-cn" => SimplifiedChinese,
+            "ja" => Japanese,
+            "ko" => Korean,
+            "tr" => Turkish,
             _ => English
         };
         if (strings.TryGetValue(key, out var value))
@@ -56,6 +63,7 @@ internal static class UiStrings
             ["Common.Selected"] = "SELECTED",
             ["Common.Compatibility"] = "COMPATIBILITY",
             ["Common.Status"] = "STATUS",
+            ["Common.Cancel"] = "Cancel",
             ["Library.InLibrary"] = "IN LIBRARY",
             ["Library.ProductDetails"] = "Product details",
             ["Library.InstalledLabel"] = "Installed:",
@@ -63,6 +71,7 @@ internal static class UiStrings
             ["Library.InstalledOnDevice"] = "INSTALLED ON DEVICE",
             ["Library.RemoveDevice"] = "Remove from device",
             ["Library.RemoveLibrary"] = "Remove from library",
+            ["Library.Remove"] = "Remove",
             ["Library.Empty"] = "Your library is empty",
             ["Library.Empty.Description"] = "Choose a product in the catalog and select Install — it will appear here when installation begins.",
             ["Details.Back"] = "← Back",
@@ -129,6 +138,11 @@ internal static class UiStrings
             ["State.DisabledSuccess"] = "Product disabled. Files remain on the device.",
             ["State.CheckingFiles"] = "Checking product files…",
             ["State.RemovedDevice"] = "Removed from the device. The product remains in your library.",
+            ["State.RemovingSelectedLanguage"] = "Removing {0}…",
+            ["State.RemovingAllLanguages"] = "Removing all language packages…",
+            ["State.RemovedSelectedLanguage"] = "{0} was removed.",
+            ["State.RemovedAllLanguages"] = "All language packages were removed.",
+            ["State.RemovedProduct"] = "The product was removed.",
             ["State.RemovalStopped"] = "Removal stopped",
             ["State.RemovingAll"] = "Removing from the device and library…",
             ["State.RemovingLibrary"] = "Removing from the library…",
@@ -154,6 +168,7 @@ internal static class UiStrings
             ["State.UnexpectedError"] = "Operation stopped: {0}",
             ["Startup.SettingsWarning"] = "The settings file is damaged or uses an unsupported version. Default settings are used for this launch.\n\n{0}\n\nThe original file was left unchanged:\n{1}",
             ["Startup.WarningTitle"] = "NFG Hub warning",
+            ["Startup.ReconcileWarning"] = "Some installed localization files for {0} could not be checked. NFG Hub kept the saved state and did not change the game files.\n\n{1}",
             ["Startup.Error"] = "NFG Hub could not start.\n\n{0}",
             ["Startup.ErrorTitle"] = "Startup error",
             ["Install.FindGame"] = "Finding the game and checking its version…",
@@ -170,7 +185,12 @@ internal static class UiStrings
             ["Install.ManagedGameNotFound"] = "The managed game installation '{0}' was not found in Steam.",
             ["Install.MissingSteamAppId"] = "Product '{0}' must declare one Steam App ID.",
             ["Startup.MigrationFailed"] = "NFG Store data could not be moved to the new NFG Hub folder. Startup was stopped so the original data remains unchanged.",
-            ["Startup.DataRootFailed"] = "The NFG Hub data folder could not be determined."
+            ["Startup.DataRootFailed"] = "The NFG Hub data folder could not be determined.",
+            ["Remove.Title"] = "Remove product",
+            ["Remove.SelectedLanguage"] = "Remove {0}",
+            ["Remove.AllLanguages"] = "Remove all languages",
+            ["Remove.MultiplePrompt"] = "Remove only the language currently selected in the list ({0}), or remove every installed NFG localization language?",
+            ["Remove.SinglePrompt"] = "Remove this product and its managed files?"
         };
 
     private static readonly Dictionary<string, string> Russian =
@@ -211,6 +231,7 @@ internal static class UiStrings
             ["Common.Selected"] = "ВЫБРАНО",
             ["Common.Compatibility"] = "СОВМЕСТИМОСТЬ",
             ["Common.Status"] = "СТАТУС",
+            ["Common.Cancel"] = "Отмена",
             ["Library.InLibrary"] = "В БИБЛИОТЕКЕ",
             ["Library.ProductDetails"] = "Описание продукта",
             ["Library.InstalledLabel"] = "Установлено:",
@@ -218,6 +239,7 @@ internal static class UiStrings
             ["Library.InstalledOnDevice"] = "УСТАНОВЛЕН НА УСТРОЙСТВЕ",
             ["Library.RemoveDevice"] = "Удалить с устройства",
             ["Library.RemoveLibrary"] = "Удалить из библиотеки",
+            ["Library.Remove"] = "Удалить",
             ["Library.Empty"] = "Библиотека пока пуста",
             ["Library.Empty.Description"] = "Выберите продукт в каталоге и нажмите «Установить» — он появится здесь после начала операции.",
             ["Details.Back"] = "← Назад",
@@ -284,6 +306,11 @@ internal static class UiStrings
             ["State.DisabledSuccess"] = "Продукт выключен. Файлы сохранены на устройстве.",
             ["State.CheckingFiles"] = "Проверка файлов продукта…",
             ["State.RemovedDevice"] = "Удалено с устройства. Продукт остаётся в библиотеке.",
+            ["State.RemovingSelectedLanguage"] = "Удаляем {0}…",
+            ["State.RemovingAllLanguages"] = "Удаляем все языковые пакеты…",
+            ["State.RemovedSelectedLanguage"] = "Пакет {0} удалён.",
+            ["State.RemovedAllLanguages"] = "Все языковые пакеты удалены.",
+            ["State.RemovedProduct"] = "Продукт удалён.",
             ["State.RemovalStopped"] = "Удаление остановлено",
             ["State.RemovingAll"] = "Удаление с устройства и из библиотеки…",
             ["State.RemovingLibrary"] = "Удаление из библиотеки…",
@@ -309,6 +336,7 @@ internal static class UiStrings
             ["State.UnexpectedError"] = "Операция остановлена: {0}",
             ["Startup.SettingsWarning"] = "Файл настроек повреждён или имеет неподдерживаемую версию. В этом запуске используются настройки по умолчанию.\n\n{0}\n\nИсходный файл сохранён без изменений:\n{1}",
             ["Startup.WarningTitle"] = "Предупреждение NFG Hub",
+            ["Startup.ReconcileWarning"] = "Не удалось проверить часть установленных файлов локализации {0}. NFG Hub сохранил прежнее состояние и не менял файлы игры.\n\n{1}",
             ["Startup.Error"] = "NFG Hub не смог запуститься.\n\n{0}",
             ["Startup.ErrorTitle"] = "Ошибка запуска",
             ["Install.FindGame"] = "Поиск игры и проверка версии…",
@@ -325,7 +353,12 @@ internal static class UiStrings
             ["Install.ManagedGameNotFound"] = "Управляемая установка игры '{0}' не найдена в Steam.",
             ["Install.MissingSteamAppId"] = "Продукт '{0}' должен объявлять один Steam App ID.",
             ["Startup.MigrationFailed"] = "Не удалось перенести данные NFG Store в новую папку NFG Hub. Запуск остановлен, чтобы сохранить исходные данные без изменений.",
-            ["Startup.DataRootFailed"] = "Не удалось определить папку данных NFG Hub."
+            ["Startup.DataRootFailed"] = "Не удалось определить папку данных NFG Hub.",
+            ["Remove.Title"] = "Удаление продукта",
+            ["Remove.SelectedLanguage"] = "Удалить {0}",
+            ["Remove.AllLanguages"] = "Удалить все языки",
+            ["Remove.MultiplePrompt"] = "Удалить только выбранный сейчас в списке язык ({0}) или все установленные языки локализатора NFG?",
+            ["Remove.SinglePrompt"] = "Удалить этот продукт и его управляемые файлы?"
         };
 
     private static readonly Dictionary<string, string> Spanish =
@@ -366,6 +399,7 @@ internal static class UiStrings
             ["Common.Selected"] = "SELECCIONADO",
             ["Common.Compatibility"] = "COMPATIBILIDAD",
             ["Common.Status"] = "ESTADO",
+            ["Common.Cancel"] = "Cancelar",
             ["Library.InLibrary"] = "EN LA BIBLIOTECA",
             ["Library.ProductDetails"] = "Detalles del producto",
             ["Library.InstalledLabel"] = "Instalado:",
@@ -373,6 +407,7 @@ internal static class UiStrings
             ["Library.InstalledOnDevice"] = "INSTALADO EN EL DISPOSITIVO",
             ["Library.RemoveDevice"] = "Quitar del dispositivo",
             ["Library.RemoveLibrary"] = "Quitar de la biblioteca",
+            ["Library.Remove"] = "Eliminar",
             ["Library.Empty"] = "Tu biblioteca está vacía",
             ["Library.Empty.Description"] = "Elige un producto del catálogo y pulsa Instalar; aparecerá aquí cuando comience la instalación.",
             ["Details.Back"] = "← Volver",
@@ -439,6 +474,11 @@ internal static class UiStrings
             ["State.DisabledSuccess"] = "Producto desactivado. Los archivos permanecen en el dispositivo.",
             ["State.CheckingFiles"] = "Comprobando los archivos del producto…",
             ["State.RemovedDevice"] = "Quitado del dispositivo. El producto permanece en la biblioteca.",
+            ["State.RemovingSelectedLanguage"] = "Eliminando {0}…",
+            ["State.RemovingAllLanguages"] = "Eliminando todos los paquetes de idioma…",
+            ["State.RemovedSelectedLanguage"] = "Se eliminó {0}.",
+            ["State.RemovedAllLanguages"] = "Se eliminaron todos los paquetes de idioma.",
+            ["State.RemovedProduct"] = "Se eliminó el producto.",
             ["State.RemovalStopped"] = "Desinstalación detenida",
             ["State.RemovingAll"] = "Quitando del dispositivo y de la biblioteca…",
             ["State.RemovingLibrary"] = "Quitando de la biblioteca…",
@@ -464,6 +504,7 @@ internal static class UiStrings
             ["State.UnexpectedError"] = "Operación detenida: {0}",
             ["Startup.SettingsWarning"] = "El archivo de configuración está dañado o usa una versión no compatible. En este inicio se usa la configuración predeterminada.\n\n{0}\n\nEl archivo original se dejó sin cambios:\n{1}",
             ["Startup.WarningTitle"] = "Advertencia de NFG Hub",
+            ["Startup.ReconcileWarning"] = "No se pudieron comprobar algunos archivos de localización instalados de {0}. NFG Hub conservó el estado guardado y no modificó los archivos del juego.\n\n{1}",
             ["Startup.Error"] = "NFG Hub no pudo iniciarse.\n\n{0}",
             ["Startup.ErrorTitle"] = "Error de inicio",
             ["Install.FindGame"] = "Buscando el juego y comprobando su versión…",
@@ -480,6 +521,11 @@ internal static class UiStrings
             ["Install.ManagedGameNotFound"] = "No se encontró en Steam la instalación administrada del juego '{0}'.",
             ["Install.MissingSteamAppId"] = "El producto '{0}' debe declarar un Steam App ID.",
             ["Startup.MigrationFailed"] = "No se pudieron mover los datos de NFG Store a la nueva carpeta de NFG Hub. El inicio se detuvo para conservar los datos originales sin cambios.",
-            ["Startup.DataRootFailed"] = "No se pudo determinar la carpeta de datos de NFG Hub."
+            ["Startup.DataRootFailed"] = "No se pudo determinar la carpeta de datos de NFG Hub.",
+            ["Remove.Title"] = "Eliminar producto",
+            ["Remove.SelectedLanguage"] = "Eliminar {0}",
+            ["Remove.AllLanguages"] = "Eliminar todos los idiomas",
+            ["Remove.MultiplePrompt"] = "¿Quieres eliminar solo el idioma seleccionado actualmente en la lista ({0}) o todos los idiomas de localización NFG instalados?",
+            ["Remove.SinglePrompt"] = "¿Quieres eliminar este producto y sus archivos administrados?"
         };
 }

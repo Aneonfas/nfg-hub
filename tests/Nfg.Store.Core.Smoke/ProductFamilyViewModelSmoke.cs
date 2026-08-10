@@ -38,7 +38,8 @@ internal static class ProductFamilyViewModelSmoke
             libraryStore,
             installedRussian,
             isInLibrary: true,
-            detectedGameBuildId: "100");
+            detectedGameBuildId: "100",
+            deletionPrompt: new StubDeletionPrompt(ProductDeletionChoice.SelectedVariant));
 
         Assert(family.AvailableVariants.Count == 2, "RU/ES family did not expose two variants.");
         Assert(family.SelectedVariant.ProductId == RuProductId,
@@ -63,6 +64,12 @@ internal static class ProductFamilyViewModelSmoke
             "Selected ES was not displayed separately from installed RU.");
         Assert(family.AvailableVersions.Count == 2,
             "Selecting language before version did not rebuild ES release options.");
+        Assert(family.SelectedVersionValue == "1.0.0",
+            "The selected version value was not restored after changing language.");
+        family.SelectedVersionValue = "0.9.0";
+        Assert(family.SelectedVersion?.Version == "0.9.0",
+            "The version selector value did not update the selected release.");
+        family.SelectedVersionValue = "1.0.0";
         Assert(family.HasVariantChange && !family.HasVersionChange,
             "A same-SemVer RU to ES transition was not classified as a variant switch.");
         Assert(family.CanApply, "A same-SemVer RU to ES transition was not actionable.");
@@ -106,11 +113,13 @@ internal static class ProductFamilyViewModelSmoke
             "Inactive selected RU was allowed to replace the active ES expected-product guard.");
 
         family.RemoveFromDeviceCommand.Execute(null);
-        var removeCall = await operations.RemoveEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var removeCall = await operations.FamilyRemoveEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await WaitUntilAsync(() => !family.IsBusy, "Remove operation did not finish.");
-        Assert(removeCall.InstallationKey == InstallationKey &&
-               removeCall.ExpectedProductId == EsProductId,
-            "Inactive selected RU was allowed to remove without guarding active ES.");
+        Assert(removeCall.SelectedProductId == RuProductId &&
+               removeCall.Scope == ManagedVariantRemovalScope.SelectedVariant,
+            "Remove did not target the language selected in the dropdown.");
+        Assert(family.InstalledVariantLabel == "ES",
+            "Removing selected RU unexpectedly removed the active ES variant.");
 
         await CheckApplyFailureReloadsCommittedStateAsync(
             Path.Combine(dataRoot, "apply-failure-after-commit"),
@@ -196,7 +205,8 @@ internal static class ProductFamilyViewModelSmoke
             libraryStore,
             installedState: null,
             isInLibrary: true,
-            detectedGameBuildId: "100");
+            detectedGameBuildId: "100",
+            deletionPrompt: new StubDeletionPrompt(ProductDeletionChoice.SelectedVariant));
 
         family.RemoveFromLibraryCommand.Execute(null);
         await WaitUntilAsync(() => !family.IsInLibrary,
@@ -430,6 +440,9 @@ internal static class ProductFamilyViewModelSmoke
         string gameRoot) : IProductInstallationOperations
     {
         private readonly TaskCompletionSource<ManagedInstallResult> _applyCompletion = NewSignal<ManagedInstallResult>();
+        private readonly HashSet<string> _installedProductIds = initialState is null
+            ? []
+            : [initialState.ProductId];
         private InstalledProductState? _state = initialState;
 
         public TaskCompletionSource<ApplyCall> ApplyEntered { get; } = NewSignal<ApplyCall>();
@@ -437,6 +450,9 @@ internal static class ProductFamilyViewModelSmoke
         public TaskCompletionSource<GuardedCall> ToggleEntered { get; } = NewSignal<GuardedCall>();
 
         public TaskCompletionSource<GuardedCall> RemoveEntered { get; } = NewSignal<GuardedCall>();
+
+        public TaskCompletionSource<FamilyRemoveCall> FamilyRemoveEntered { get; } =
+            NewSignal<FamilyRemoveCall>();
 
         public ProductGameInstallation? DetectGameInstallation(
             ProductManifest product,
@@ -459,6 +475,7 @@ internal static class ProductFamilyViewModelSmoke
                 expectedProductId));
             var result = await _applyCompletion.Task.WaitAsync(cancellationToken);
             _state = result.State;
+            _installedProductIds.Add(result.State.ProductId);
             return result;
         }
 
@@ -466,6 +483,36 @@ internal static class ProductFamilyViewModelSmoke
             string installationKey,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(_state);
+
+        public Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+            IReadOnlyList<ProductManifest> products,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateInventory(products));
+
+        public Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+            IReadOnlyList<ProductManifest> products,
+            string selectedProductId,
+            ManagedVariantRemovalScope scope,
+            CancellationToken cancellationToken = default)
+        {
+            FamilyRemoveEntered.TrySetResult(new FamilyRemoveCall(selectedProductId, scope));
+            if (scope == ManagedVariantRemovalScope.AllVariants ||
+                string.Equals(_state?.ProductId, selectedProductId, StringComparison.Ordinal))
+            {
+                _state = null;
+            }
+
+            if (scope == ManagedVariantRemovalScope.AllVariants)
+            {
+                _installedProductIds.Clear();
+            }
+            else
+            {
+                _installedProductIds.Remove(selectedProductId);
+            }
+
+            return Task.FromResult(CreateInventory(products));
+        }
 
         public Task<InstalledProductState> SetEnabledAsync(
             string installationKey,
@@ -487,6 +534,7 @@ internal static class ProductFamilyViewModelSmoke
             CancellationToken cancellationToken = default)
         {
             RemoveEntered.TrySetResult(new GuardedCall(installationKey, expectedProductId));
+            _installedProductIds.Remove(expectedProductId);
             _state = null;
             return Task.CompletedTask;
         }
@@ -499,11 +547,36 @@ internal static class ProductFamilyViewModelSmoke
             Exception exception)
         {
             _state = persistedState;
+            _installedProductIds.Add(persistedState.ProductId);
             _applyCompletion.TrySetException(exception);
         }
 
         private static TaskCompletionSource<T> NewSignal<T>() =>
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private ManagedFamilyInventory CreateInventory(
+            IReadOnlyList<ProductManifest> products) => new(
+            InstallationKey,
+            _state,
+            products.Select(product => new ManagedVariantPresence(
+                product.Id,
+                _state is not null && _state.ProductId == product.Id
+                    ? _state.Version
+                    : product.Release.Version,
+                IsInstalled: _installedProductIds.Contains(product.Id),
+                IsEnabled: _state is not null &&
+                           _state.ProductId == product.Id &&
+                           _state.IsEnabled,
+                HasRelatedArtifacts: _installedProductIds.Contains(product.Id))).ToArray());
+    }
+
+    private sealed class StubDeletionPrompt(ProductDeletionChoice choice)
+        : IProductDeletionPrompt
+    {
+        public ProductDeletionChoice Confirm(
+            string selectedVariantLabel,
+            bool hasOtherInstalledVariants,
+            bool isProductFamily) => choice;
     }
 
     private sealed class OfflineHandler : HttpMessageHandler
@@ -522,4 +595,8 @@ internal static class ProductFamilyViewModelSmoke
     private sealed record GuardedCall(
         string InstallationKey,
         string ExpectedProductId);
+
+    private sealed record FamilyRemoveCall(
+        string SelectedProductId,
+        ManagedVariantRemovalScope Scope);
 }

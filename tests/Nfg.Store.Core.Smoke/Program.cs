@@ -586,8 +586,15 @@ void CheckLocalization()
         "Russian system culture was not detected.");
     Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("es-MX")) == "es",
         "Spanish regional culture was not detected.");
-    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("de-DE")) == "en",
-        "Unsupported system culture should fall back to English.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("de-DE")) == "de",
+        "German system culture was not detected.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("pt-PT")) == "pt-br",
+        "Portuguese system culture did not map to the supported Brazilian locale.");
+    Assert(LocalizationService.DetectLanguage(CultureInfo.GetCultureInfo("zh-TW")) == "en",
+        "Traditional Chinese was incorrectly mapped to Simplified Chinese.");
+    Assert(LocalizationService.SupportedLanguages.Select(language => language.Code)
+            .SequenceEqual(["en", "ru", "es", "de", "fr", "pt-br", "zh-cn", "ja", "ko", "tr"]),
+        "The Hub interface does not expose the expected ten locales.");
 
     var product = new ProductViewModel(CreateProduct(1, new string('a', 64)));
     var languageRefreshes = 0;
@@ -609,10 +616,18 @@ void CheckLocalization()
         "Spanish UI resources were not selected.");
     Assert(product.TypeLabel == "Localización",
         "An existing view model did not refresh to Spanish.");
+    LocalizationService.Instance.SetLanguage("de");
+    Assert(LocalizationService.Instance.Get("Nav.Library") == "Bibliothek" &&
+           product.TypeLabel == "Lokalisierung",
+        "German UI resources were not selected.");
+    LocalizationService.Instance.SetLanguage("pt-BR");
+    Assert(LocalizationService.Instance.CurrentLanguage == "pt-br" &&
+           LocalizationService.Instance.Get("Library.Remove") == "Remover",
+        "Regional Portuguese did not select the pt-br UI resources.");
     LocalizationService.Instance.SetLanguage("ru");
     Assert(LocalizationService.Instance.Get("Nav.Catalog") == "Каталог",
         "Russian UI resources were not selected.");
-    Assert(product.TypeLabel == "Локализация" && languageRefreshes == 3,
+    Assert(product.TypeLabel == "Локализация" && languageRefreshes == 5,
         "Live UI language changes were not broadcast to existing view models.");
 }
 
@@ -654,7 +669,7 @@ void CheckAppSettingsPersistence()
                  ("unsupported-schema", """{ "schemaVersion": 2, "checkUpdatesAutomatically": true }"""),
                  ("missing-schema", """{ "checkUpdatesAutomatically": true }"""),
                  ("missing-setting", """{ "schemaVersion": 1 }"""),
-                 ("unsupported-language", """{ "schemaVersion": 1, "checkUpdatesAutomatically": true, "uiLanguage": "fr" }""")
+                 ("unsupported-language", """{ "schemaVersion": 1, "checkUpdatesAutomatically": true, "uiLanguage": "it" }""")
              })
     {
         var invalidRoot = Path.Combine(testRoot, "app-settings-invalid", caseName);

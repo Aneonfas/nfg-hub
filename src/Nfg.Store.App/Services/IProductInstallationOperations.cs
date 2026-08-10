@@ -19,6 +19,16 @@ internal interface IProductInstallationOperations
         string installationKey,
         CancellationToken cancellationToken = default);
 
+    Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+        IReadOnlyList<ProductManifest> products,
+        CancellationToken cancellationToken = default);
+
+    Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+        IReadOnlyList<ProductManifest> products,
+        string selectedProductId,
+        ManagedVariantRemovalScope scope,
+        CancellationToken cancellationToken = default);
+
     Task<InstalledProductState> SetEnabledAsync(
         string installationKey,
         string expectedProductId,
@@ -54,6 +64,22 @@ internal sealed class ProductInstallationOperations(
         string installationKey,
         CancellationToken cancellationToken = default) =>
         coordinator.LoadInstalledStateAsync(installationKey, cancellationToken);
+
+    public Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+        IReadOnlyList<ProductManifest> products,
+        CancellationToken cancellationToken = default) =>
+        coordinator.ReconcileFamilyAsync(products, cancellationToken);
+
+    public Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+        IReadOnlyList<ProductManifest> products,
+        string selectedProductId,
+        ManagedVariantRemovalScope scope,
+        CancellationToken cancellationToken = default) =>
+        coordinator.RemoveFamilyVariantAsync(
+            products,
+            selectedProductId,
+            scope,
+            cancellationToken);
 
     public Task<InstalledProductState> SetEnabledAsync(
         string installationKey,

@@ -1,9 +1,18 @@
 # NFG Hub
 
 NFG Hub is a lightweight Windows catalog, installer, and library for NFG products.
-Hub 0.2.0 adds Russian and Spanish Anvil Empires localization variants.
+Hub 0.3.0 reconciles Anvil Empires localization state with the actual managed
+files, simplifies language removal, and expands the Hub interface to ten
+languages.
 
 The current repository contains a working Windows Hub shell and versioned catalog/package contracts. The app loads the official catalog over HTTPS, keeps a validated local cache, downloads ZIP-only packages, detects Steam installations, and applies declared managed files without launching external installers.
+
+Hub 0.3.0 offers the interface in English, Russian,
+Spanish, German, French, Brazilian Portuguese, Simplified Chinese, Japanese,
+Korean, and Turkish. Localization families are reconciled with their actual
+managed files at startup. Their single Remove action can delete the language
+selected in the list or, when other languages are present, every language in
+the family.
 
 Official catalog: <https://github.com/Aneonfas/nfg-hub-catalog>
 
@@ -36,7 +45,7 @@ See [docs/releasing.md](docs/releasing.md) for the release policy and commands.
 - `src/Nfg.Store.Contracts` — product and catalog manifest contracts.
 - `src/Nfg.Store.Installation` — hash-guarded managed-file installation, activation state, and removal.
 - `src/Nfg.Store.Platform.Windows` — Windows registry, Steam library, and app-manifest discovery.
-- `catalog-v2` — pinned bundled fallback used by Hub 0.2.0.
+- `catalog-v2` — pinned bundled fallback used by Hub 0.2.0 and later.
 - `catalog-v2.snapshot.json` — authoritative commit and SHA-256 lock for that snapshot.
 - `catalog` and `catalog.snapshot.json` — retained legacy snapshot for Hub 0.1.1.
 - `docs/architecture.md` — current boundaries and installation lifecycle.
@@ -54,5 +63,5 @@ The public catalog is authored in
 Bundled files are synchronized from a committed state of that repository with
 `scripts/catalog-snapshot.ps1`; `scripts/verify.ps1` rejects manual drift from
 the pinned commit and hashes. The public root catalog remains the Product
-Manifest schema-v1 feed for Hub 0.1.1. Hub 0.2.0 uses the separate
+Manifest schema-v1 feed for Hub 0.1.1. Hub 0.2.0 and later use the separate
 `/v2/catalog.json` feed and `catalog-v2` cache/bundle namespace.

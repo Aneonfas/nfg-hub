@@ -20,8 +20,8 @@ run.
    ```powershell
    git switch main
    git pull --ff-only
-   git tag -a v0.2.0 -m "NFG Hub 0.2.0"
-   git push origin v0.2.0
+   git tag -a v0.3.0 -m "NFG Hub 0.3.0"
+   git push origin v0.3.0
    ```
 
 4. The release workflow verifies that the tag is annotated, belongs to `main`,
@@ -33,7 +33,7 @@ run.
    and attestation before publishing the draft manually.
 
 The workflow can be rerun from GitHub's run page, or dispatched explicitly for
-an existing tag with `gh workflow run release.yml --ref v0.2.0`. A manual
+an existing tag with `gh workflow run release.yml --ref v0.3.0`. A manual
 dispatch from a branch is rejected. The workflow may reuse assets only while
 the release is still a draft and only when their digests are identical. It
 refuses to replace different bytes or any asset in a published release.
@@ -52,7 +52,7 @@ the release workflow; the next one should become the current **Latest** release.
 
 Product metadata is authored in the sibling `nfg-hub-catalog` repository. Its
 root `catalog.json` is the legacy Product Manifest schema-v1 feed consumed by
-Hub 0.1.1. Hub 0.2.0 consumes `/v2/catalog.json` and uses the separate
+Hub 0.1.1. Hub 0.2.0 and later consume `/v2/catalog.json` and use the separate
 `catalog-v2/` bundled snapshot. Root-referenced product files must never be
 converted to v2.
 
@@ -115,6 +115,6 @@ After GitHub Actions creates an attestation, a downloaded official ZIP can be
 verified with GitHub CLI:
 
 ```powershell
-gh attestation verify .\NFG-Hub-v0.2.0-win-x64.zip `
+gh attestation verify .\NFG-Hub-v0.3.0-win-x64.zip `
     --repo Aneonfas/nfg-hub
 ```

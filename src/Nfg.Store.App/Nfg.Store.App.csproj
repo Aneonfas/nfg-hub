@@ -7,7 +7,7 @@
     <AssemblyTitle>NFG Hub</AssemblyTitle>
     <Product>NFG Hub</Product>
     <Description>NFG Hub desktop application.</Description>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <ApplicationIcon>Assets\NfgHub.ico</ApplicationIcon>
   </PropertyGroup>
 
