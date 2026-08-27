@@ -183,11 +183,11 @@ public sealed class ProductInstallationCoordinator(
                 currentState?.ProductId,
                 StringComparison.Ordinal)) ?? family[0],
             currentState?.GameRoot);
-        var packages = await LoadFamilyPackagesAsync(
+        var packages = await LoadCachedFamilyPackagesAsync(
             family,
-            currentState,
             cancellationToken);
         return await _installer.ReconcileFamilyAsync(
+            family,
             packages,
             installation.GameRoot,
             installation.BuildId,
@@ -208,11 +208,11 @@ public sealed class ProductInstallationCoordinator(
                 currentState?.ProductId,
                 StringComparison.Ordinal)) ?? family[0],
             currentState?.GameRoot);
-        var packages = await LoadFamilyPackagesAsync(
+        var packages = await LoadCachedFamilyPackagesAsync(
             family,
-            currentState,
             cancellationToken);
         return await _installer.RemoveFamilyVariantAsync(
+            family,
             packages,
             installation.GameRoot,
             selectedProductId,
@@ -289,56 +289,56 @@ public sealed class ProductInstallationCoordinator(
                         outcome.State.IsEnabled
                             ? LocalizationService.Instance.Get("State.ActualEnabled")
                             : LocalizationService.Instance.Get("State.ActualDisabled"));
+            var message = exception is ActiveLocalizationConflictException conflict
+                ? LocalizationService.Instance.Format(
+                    "State.LocalizationConflictDetails",
+                    string.Join(Environment.NewLine, conflict.Paths))
+                : exception.Message;
             throw new ProductInstallationException(
-                $"{exception.Message} {actualOutcome}",
+                $"{message} {actualOutcome}",
                 exception,
                 outcome.State,
                 actualStateUnreadable: !outcome.IsReadable);
         }
     }
 
-    private async Task<IReadOnlyList<ManagedVariantPackage>> LoadFamilyPackagesAsync(
+    private async Task<IReadOnlyList<ManagedVariantPackage>> LoadCachedFamilyPackagesAsync(
         IReadOnlyList<ProductManifest> products,
-        InstalledProductState? currentState,
         CancellationToken cancellationToken)
     {
-        var packageManifests = new List<ProductManifest>(products.Count + 1);
+        var packages = new List<ManagedVariantPackage>();
         foreach (var product in products)
         {
-            packageManifests.Add(product);
-            if (currentState is null ||
-                !product.Id.Equals(currentState.ProductId, StringComparison.Ordinal) ||
-                product.Release.Version.Equals(currentState.Version, StringComparison.Ordinal))
+            // Inventory and removal must not depend on another locale's download.
+            // Cached history can identify a manual old release even without Hub state.
+            foreach (var release in ProductReleaseCatalog.GetAvailableReleases(product)
+                         .Where(ProductReleaseCatalog.IsPublished))
             {
-                continue;
-            }
+                var candidate = ProductReleaseCatalog.CreateManifestForRelease(product, release);
+                try
+                {
+                    var archivePath = await _downloader.TryGetCachedAsync(
+                        candidate,
+                        _downloadRoot,
+                        cancellationToken);
+                    if (archivePath is null)
+                    {
+                        continue;
+                    }
 
-            var installedRelease = ProductReleaseCatalog
-                .GetAvailableReleases(product)
-                .FirstOrDefault(release => release.Version.Equals(
-                    currentState.Version,
-                    StringComparison.Ordinal));
-            if (installedRelease is not null)
-            {
-                packageManifests.Add(ProductReleaseCatalog.CreateManifestForRelease(
-                    product,
-                    installedRelease));
+                    var package = await _archiveService.ValidateAsync(
+                        archivePath,
+                        candidate,
+                        cancellationToken);
+                    packages.Add(new ManagedVariantPackage(candidate, package));
+                }
+                catch (Exception exception) when (
+                    exception is PackageValidationException or IOException or UnauthorizedAccessException)
+                {
+                    // Cache is optional evidence. Stored, hash-guarded installation
+                    // state remains usable when a cached ZIP is corrupt or unavailable.
+                }
             }
-        }
-
-        var packages = new List<ManagedVariantPackage>(packageManifests.Count);
-        foreach (var product in packageManifests)
-        {
-            var archivePath = await _downloader.DownloadAsync(
-                product,
-                _downloadRoot,
-                progress: null,
-                cancellationToken);
-            var package = await _archiveService.ValidateAsync(
-                archivePath,
-                product,
-                cancellationToken);
-            packages.Add(new ManagedVariantPackage(product, package));
         }
 
         return packages;

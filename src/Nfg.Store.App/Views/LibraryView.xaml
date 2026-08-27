@@ -123,6 +123,13 @@
                                             </StackPanel>
                                         </StackPanel>
 
+                                        <TextBlock Margin="0,15,0,0"
+                                                   Text="{Binding LocalizationConflictMessage}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource AmberBrush}"
+                                                   Visibility="{Binding HasLocalizationConflict, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
                                         <Grid Margin="0,21,0,0"
                                               Visibility="{Binding IsProgressVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid.RowDefinitions>

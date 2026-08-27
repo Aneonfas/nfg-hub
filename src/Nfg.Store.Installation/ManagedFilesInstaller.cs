@@ -186,13 +186,26 @@ public sealed class ManagedFilesInstaller
             });
     }
 
+    public Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+        IReadOnlyList<ManagedVariantPackage> variants,
+        string gameRoot,
+        string? detectedSteamBuildId = null,
+        CancellationToken cancellationToken = default) =>
+        ReconcileFamilyAsync(
+            GetFamilyProducts(variants),
+            variants,
+            gameRoot,
+            detectedSteamBuildId,
+            cancellationToken);
+
     public async Task<ManagedFamilyInventory> ReconcileFamilyAsync(
+        IReadOnlyList<ProductManifest> products,
         IReadOnlyList<ManagedVariantPackage> variants,
         string gameRoot,
         string? detectedSteamBuildId = null,
         CancellationToken cancellationToken = default)
     {
-        var installationKey = ValidateFamilyVariants(variants);
+        var installationKey = ValidateFamilyVariants(products, variants);
         return await _operationLock.ExecuteAsync(
             installationKey,
             cancellationToken,
@@ -200,6 +213,7 @@ public sealed class ManagedFilesInstaller
             {
                 await RecoverPendingOperationCoreAsync(installationKey);
                 return await ReconcileFamilyCoreAsync(
+                    products,
                     variants,
                     installationKey,
                     gameRoot,
@@ -208,7 +222,24 @@ public sealed class ManagedFilesInstaller
             });
     }
 
+    public Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+        IReadOnlyList<ManagedVariantPackage> variants,
+        string gameRoot,
+        string selectedProductId,
+        ManagedVariantRemovalScope scope,
+        string? detectedSteamBuildId = null,
+        CancellationToken cancellationToken = default) =>
+        RemoveFamilyVariantAsync(
+            GetFamilyProducts(variants),
+            variants,
+            gameRoot,
+            selectedProductId,
+            scope,
+            detectedSteamBuildId,
+            cancellationToken);
+
     public async Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
+        IReadOnlyList<ProductManifest> products,
         IReadOnlyList<ManagedVariantPackage> variants,
         string gameRoot,
         string selectedProductId,
@@ -217,9 +248,9 @@ public sealed class ManagedFilesInstaller
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(selectedProductId);
-        var installationKey = ValidateFamilyVariants(variants);
+        var installationKey = ValidateFamilyVariants(products, variants);
         if (scope == ManagedVariantRemovalScope.SelectedVariant &&
-            !variants.Any(variant => variant.Product.Id.Equals(
+            !products.Any(product => product.Id.Equals(
                 selectedProductId,
                 StringComparison.Ordinal)))
         {
@@ -233,11 +264,26 @@ public sealed class ManagedFilesInstaller
             async () =>
             {
                 await RecoverPendingOperationCoreAsync(installationKey);
+                var previousState = await _stateStore.LoadAsync(installationKey, cancellationToken);
                 var inventory = await ReconcileFamilyCoreAsync(
+                    products,
                     variants,
                     installationKey,
                     gameRoot,
                     detectedSteamBuildId,
+                    cancellationToken);
+                var candidates = CreateInventoryCandidates(
+                    variants, previousState, installationKey, gameRoot, detectedSteamBuildId);
+                var selectedCandidates = candidates.Where(candidate =>
+                    scope == ManagedVariantRemovalScope.AllVariants ||
+                    candidate.ProductId.Equals(selectedProductId, StringComparison.Ordinal));
+                var artifacts = await PlanRelatedArtifactRemovalAsync(
+                    selectedCandidates,
+                    GetAnvilLocalizationPaths(
+                        installationKey, GetFamilySteamAppId(products), Path.GetFullPath(gameRoot))
+                        .Where(path => scope == ManagedVariantRemovalScope.AllVariants ||
+                            string.Equals(GetAnvilLocalizationProductId(path), selectedProductId,
+                                StringComparison.Ordinal)),
                     cancellationToken);
                 var state = inventory.State;
                 if (state is not null &&
@@ -250,14 +296,23 @@ public sealed class ManagedFilesInstaller
                         cancellationToken);
                 }
 
-                var selectedVariants = scope == ManagedVariantRemovalScope.AllVariants
-                    ? variants
-                    : variants.Where(variant => variant.Product.Id.Equals(
-                        selectedProductId,
-                        StringComparison.Ordinal)).ToArray();
-                foreach (var variant in selectedVariants)
+                foreach (var artifact in artifacts)
                 {
-                    await DeleteRelatedArtifactsAsync(variant, gameRoot, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!File.Exists(artifact.Path))
+                    {
+                        continue;
+                    }
+
+                    RejectReparsePoint(artifact.Path);
+                    if (!await MatchesAsync(
+                            artifact.Path, artifact.SizeBytes, artifact.Sha256, cancellationToken))
+                    {
+                        throw new ManagedFilesInstallException(
+                            $"Localization file '{artifact.Path}' changed before removal and was preserved.");
+                    }
+
+                    File.Delete(artifact.Path);
                 }
 
                 if (scope == ManagedVariantRemovalScope.AllVariants)
@@ -266,6 +321,7 @@ public sealed class ManagedFilesInstaller
                 }
 
                 return await ReconcileFamilyCoreAsync(
+                    products,
                     variants,
                     installationKey,
                     gameRoot,
@@ -297,6 +353,7 @@ public sealed class ManagedFilesInstaller
     }
 
     private async Task<ManagedFamilyInventory> ReconcileFamilyCoreAsync(
+        IReadOnlyList<ProductManifest> products,
         IReadOnlyList<ManagedVariantPackage> variants,
         string installationKey,
         string gameRoot,
@@ -307,19 +364,35 @@ public sealed class ManagedFilesInstaller
         ValidateDetectedSteamBuildId(detectedSteamBuildId);
         var fullGameRoot = Path.GetFullPath(gameRoot);
         var currentState = await _stateStore.LoadAsync(installationKey, cancellationToken);
-        var observations = new List<VariantObservation>(variants.Count);
-        foreach (var variant in variants)
+        var candidates = CreateInventoryCandidates(
+            variants, currentState, installationKey, fullGameRoot, detectedSteamBuildId);
+        var observations = new List<VariantObservation>(candidates.Count);
+        foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
             observations.Add(await ObserveVariantAsync(
-                variant,
-                fullGameRoot,
+                candidate,
                 cancellationToken));
         }
 
         var active = observations.Where(observation => observation.IsActive).ToArray();
         var hasConflict = active.Length > 1 || observations.Any(observation =>
             observation.IsActive && observation.IsDisabled);
+        var recognizedActivePaths = active
+            .SelectMany(observation => observation.Plans.Select(plan => plan.TargetPath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var familyPaths = GetAnvilLocalizationPaths(
+            installationKey, GetFamilySteamAppId(products), fullGameRoot);
+        var unrecognizedActivePaths = familyPaths
+            .Where(path => path.EndsWith(".pak", StringComparison.OrdinalIgnoreCase) &&
+                           !recognizedActivePaths.Contains(path))
+            .ToArray();
+        var conflictPaths = (hasConflict ? recognizedActivePaths : [])
+            .Concat(unrecognizedActivePaths)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        hasConflict |= unrecognizedActivePaths.Length > 0;
         VariantObservation? authoritative = active.Length == 1
             ? active[0]
             : null;
@@ -331,7 +404,7 @@ public sealed class ManagedFilesInstaller
                 .ToArray();
             authoritative = observations.FirstOrDefault(observation =>
                     observation.IsDisabled &&
-                    observation.Variant.Product.Id.Equals(
+                    observation.Candidate.ProductId.Equals(
                         currentState?.ProductId,
                         StringComparison.Ordinal))
                 ?? (disabled.Length == 1 ? disabled[0] : null);
@@ -344,24 +417,16 @@ public sealed class ManagedFilesInstaller
                 NormalizeLegacyDisabledFiles(authoritative);
             }
 
-            var payload = authoritative.Variant.Product.Release.Payload
-                ?? throw new ManagedFilesInstallException(
-                    $"Product '{authoritative.Variant.Product.Id}' has no payload.");
-            var reconciledState = CreateState(
-                authoritative.Variant.Package,
-                authoritative.Variant.Product,
-                payload,
-                installationKey,
-                fullGameRoot,
-                authoritative.IsActive,
-                detectedSteamBuildId) with
+            var reconciledState = authoritative.Candidate with
             {
+                IsEnabled = authoritative.IsActive,
+                DetectedSteamBuildId = detectedSteamBuildId,
                 InstalledAt = currentState is not null &&
                               currentState.ProductId.Equals(
-                                  authoritative.Variant.Product.Id,
+                                  authoritative.Candidate.ProductId,
                                   StringComparison.Ordinal) &&
                               currentState.Version.Equals(
-                                  authoritative.Variant.Product.Release.Version,
+                                  authoritative.Candidate.Version,
                                   StringComparison.Ordinal)
                     ? currentState.InstalledAt
                     : authoritative.LastWriteTimeUtc
@@ -378,43 +443,62 @@ public sealed class ManagedFilesInstaller
         return new ManagedFamilyInventory(
             installationKey,
             currentState,
-            observations
-                .GroupBy(
-                    observation => observation.Variant.Product.Id,
-                    StringComparer.Ordinal)
-                .Select(group =>
+            products.Select(product => product.Id)
+                .Concat(observations.Select(observation => observation.Candidate.ProductId))
+                .Distinct(StringComparer.Ordinal)
+                .Select(productId =>
                 {
+                    var group = observations.Where(observation =>
+                        observation.Candidate.ProductId.Equals(productId, StringComparison.Ordinal));
                     var installed = group.FirstOrDefault(observation =>
                         observation.IsActive || observation.IsDisabled);
-                    var representative = installed ?? group.First();
+                    var representative = installed ?? group.FirstOrDefault();
                     return new ManagedVariantPresence(
-                        group.Key,
-                        representative.Variant.Product.Release.Version,
+                        productId,
+                        representative?.Candidate.Version ??
+                        products.First(product => product.Id == productId).Release.Version,
                         IsInstalled: installed is not null,
                         IsEnabled: installed?.IsActive == true,
                         HasRelatedArtifacts: group.Any(observation =>
-                            observation.HasRelatedArtifacts));
+                            observation.HasRelatedArtifacts) ||
+                            familyPaths.Any(path => string.Equals(
+                                GetAnvilLocalizationProductId(path), productId, StringComparison.Ordinal)));
                 })
                 .ToArray(),
-            hasConflict);
+            hasConflict,
+            conflictPaths);
+    }
+
+    private static ProductManifest[] GetFamilyProducts(IReadOnlyList<ManagedVariantPackage> variants)
+    {
+        ArgumentNullException.ThrowIfNull(variants);
+        return variants.Select(variant => variant.Product)
+            .DistinctBy(product => product.Id, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static string ValidateFamilyVariants(
+        IReadOnlyList<ProductManifest> products,
         IReadOnlyList<ManagedVariantPackage> variants)
     {
+        ArgumentNullException.ThrowIfNull(products);
         ArgumentNullException.ThrowIfNull(variants);
-        if (variants.Count == 0)
+        if (products.Count == 0)
         {
             throw new ArgumentException(
-                "At least one product variant is required.",
-                nameof(variants));
+                "At least one product family member is required.",
+                nameof(products));
         }
 
-        var installationKey = ProductInstallationKey.FromManifest(variants[0].Product);
-        if (variants.Any(variant =>
+        var installationKey = ProductInstallationKey.FromManifest(products[0]);
+        if (products.Any(product => !ProductInstallationKey.FromManifest(product).Equals(
+                installationKey, StringComparison.OrdinalIgnoreCase)) ||
+            variants.Any(variant =>
                 !ProductInstallationKey.FromManifest(variant.Product).Equals(
                     installationKey,
                     StringComparison.OrdinalIgnoreCase) ||
+                !products.Any(product => product.Id.Equals(
+                    variant.Product.Id, StringComparison.Ordinal)) ||
                 !variant.Package.Manifest.ProductId.Equals(
                     variant.Product.Id,
                     StringComparison.Ordinal) ||
@@ -429,12 +513,56 @@ public sealed class ManagedFilesInstaller
         return installationKey;
     }
 
-    private static async Task<VariantObservation> ObserveVariantAsync(
-        ManagedVariantPackage variant,
+    private static List<InstalledProductState> CreateInventoryCandidates(
+        IReadOnlyList<ManagedVariantPackage> variants,
+        InstalledProductState? currentState,
+        string installationKey,
         string gameRoot,
+        string? detectedSteamBuildId)
+    {
+        var root = Path.GetFullPath(gameRoot);
+        var candidates = new List<InstalledProductState>();
+        if (currentState is not null)
+        {
+            if (!PathsEqual(currentState.GameRoot, root))
+            {
+                throw new ManagedFilesInstallException(
+                    "The managed installation is located in a different game directory.");
+            }
+
+            candidates.Add(currentState);
+        }
+
+        foreach (var variant in variants)
+        {
+            var payload = variant.Product.Release.Payload
+                ?? throw new ManagedFilesInstallException(
+                    $"Product '{variant.Product.Id}' has no payload.");
+            var candidate = CreateState(
+                variant.Package, variant.Product, payload, installationKey,
+                root, isEnabled: true, detectedSteamBuildId);
+            // A state record and multiple release ZIPs can describe the same
+            // physical PAK. Count that file once, keeping the recorded version.
+            if (!candidates.Any(existing =>
+                    existing.ProductId.Equals(candidate.ProductId, StringComparison.Ordinal) &&
+                    existing.Files.Count == candidate.Files.Count &&
+                    existing.Files.All(file => candidate.Files.Any(other =>
+                        file.Destination.Equals(other.Destination, StringComparison.OrdinalIgnoreCase) &&
+                        file.SizeBytes == other.SizeBytes &&
+                        file.Sha256.Equals(other.Sha256, StringComparison.OrdinalIgnoreCase)))))
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        return candidates;
+    }
+
+    private static async Task<VariantObservation> ObserveVariantAsync(
+        InstalledProductState candidate,
         CancellationToken cancellationToken)
     {
-        var plans = CreatePackageFilePlans(variant.Package, gameRoot);
+        var plans = CreateStateFilePlans(candidate);
         var isActive = await AllPlansMatchAsync(
             plans,
             plan => plan.TargetPath,
@@ -457,7 +585,7 @@ public sealed class ManagedFilesInstaller
             .Select(path => File.GetLastWriteTimeUtc(path))
             .ToArray();
         return new VariantObservation(
-            variant,
+            candidate,
             plans,
             isActive,
             isDisabled,
@@ -469,8 +597,8 @@ public sealed class ManagedFilesInstaller
     }
 
     private static async Task<bool> AllPlansMatchAsync(
-        IReadOnlyList<FilePlan> plans,
-        Func<FilePlan, string> pathSelector,
+        IReadOnlyList<StateFilePlan> plans,
+        Func<StateFilePlan, string> pathSelector,
         CancellationToken cancellationToken)
     {
         foreach (var plan in plans)
@@ -479,8 +607,8 @@ public sealed class ManagedFilesInstaller
             if (!IsRegularFile(path) ||
                 !await MatchesAsync(
                     path,
-                    plan.PackageFile.SizeBytes,
-                    plan.PackageFile.Sha256,
+                    plan.State.SizeBytes,
+                    plan.State.Sha256,
                     cancellationToken))
             {
                 return false;
@@ -501,25 +629,52 @@ public sealed class ManagedFilesInstaller
         }
     }
 
-    private static async Task DeleteRelatedArtifactsAsync(
-        ManagedVariantPackage variant,
-        string gameRoot,
+    private static async Task<IReadOnlyList<KnownArtifact>> PlanRelatedArtifactRemovalAsync(
+        IEnumerable<InstalledProductState> candidates,
+        IEnumerable<string> familyArtifactPaths,
         CancellationToken cancellationToken)
     {
-        foreach (var plan in CreatePackageFilePlans(variant.Package, gameRoot))
+        var artifacts = new List<KnownArtifact>();
+        foreach (var group in candidates.SelectMany(CreateStateFilePlans)
+                     .GroupBy(plan => plan.TargetPath, StringComparer.OrdinalIgnoreCase))
         {
-            foreach (var path in EnumerateRelatedArtifactPaths(plan.TargetPath))
+            foreach (var path in EnumerateRelatedArtifactPaths(group.Key))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (File.Exists(path))
+                RejectReparsePoint(path);
+                StateFilePlan? owner = null;
+                foreach (var plan in group)
                 {
-                    RejectReparsePoint(path);
-                    File.Delete(path);
+                    if (await MatchesAsync(
+                            path, plan.State.SizeBytes, plan.State.Sha256, cancellationToken))
+                    {
+                        owner = plan;
+                        break;
+                    }
                 }
+
+                if (owner is null)
+                {
+                    throw new ManagedFilesInstallException(
+                        $"Localization file '{path}' is modified or unrecognized. " +
+                        "It was preserved; move it out of the game folder before retrying removal.");
+                }
+
+                artifacts.Add(new KnownArtifact(path, owner.State.SizeBytes, owner.State.Sha256));
             }
         }
 
-        await Task.CompletedTask;
+        foreach (var path in familyArtifactPaths)
+        {
+            if (!artifacts.Any(artifact => PathsEqual(artifact.Path, path)))
+            {
+                throw new ManagedFilesInstallException(
+                    $"Localization file '{path}' is unrecognized and was preserved. " +
+                    "Move it out of the game folder before retrying removal.");
+            }
+        }
+
+        return artifacts;
     }
 
     private static IReadOnlyList<string> EnumerateRelatedArtifactPaths(string targetPath)
@@ -555,6 +710,78 @@ public sealed class ManagedFilesInstaller
 
     private static string GetLegacyDisabledPath(string targetPath) =>
         $"{targetPath}.disabled";
+
+    private static string? GetFamilySteamAppId(IReadOnlyList<ProductManifest> products)
+    {
+        var appIds = products.SelectMany(product => product.Installation.Detection)
+            .Where(rule => string.Equals(rule.Provider, "steam", StringComparison.OrdinalIgnoreCase))
+            .Select(rule => rule.ProductId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return appIds.Length == 1 ? appIds[0] : null;
+    }
+
+    private static IReadOnlyList<string> GetAnvilLocalizationPaths(
+        string installationKey,
+        string? steamAppId,
+        string gameRoot)
+    {
+        // These are the published manual RU/ES filenames, including older releases.
+        // Restrict this compatibility rule to their slot and game; unrelated mods
+        // and disabled backups must never be treated as active language conflicts.
+        if (!installationKey.Equals("nfg.anvil-empires.ru", StringComparison.Ordinal) ||
+            !string.Equals(steamAppId, "2383950", StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        var directory = Path.Combine(gameRoot, "Anvil", "Content", "Paks");
+        if (!Directory.Exists(directory))
+        {
+            return [];
+        }
+
+        EnsureNoReparsePoints(gameRoot, directory);
+        return Directory.EnumerateFiles(directory)
+            .Where(path => GetAnvilLocalizationProductId(path) is not null &&
+                (path.EndsWith(".pak", StringComparison.OrdinalIgnoreCase) ||
+                 path.EndsWith(".pak.nfg-disabled", StringComparison.OrdinalIgnoreCase) ||
+                 path.EndsWith(".pak.disabled", StringComparison.OrdinalIgnoreCase) ||
+                 path.Contains(".pak.previous-", StringComparison.OrdinalIgnoreCase) &&
+                 path.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)))
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string? GetAnvilLocalizationProductId(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.StartsWith("Anvil-Russian", StringComparison.OrdinalIgnoreCase))
+        {
+            return "nfg.anvil-empires.ru";
+        }
+
+        return name.StartsWith("Anvil-Spanish", StringComparison.OrdinalIgnoreCase)
+            ? "nfg.anvil-empires.es"
+            : null;
+    }
+
+    private static void EnsureNoActiveLocalizationConflicts(
+        string installationKey,
+        string steamAppId,
+        string gameRoot,
+        IEnumerable<string> ownedOrAdoptablePaths)
+    {
+        var allowed = ownedOrAdoptablePaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var conflicts = GetAnvilLocalizationPaths(installationKey, steamAppId, gameRoot)
+            .Where(path => path.EndsWith(".pak", StringComparison.OrdinalIgnoreCase) &&
+                           !allowed.Contains(path))
+            .ToArray();
+        if (conflicts.Length > 0)
+        {
+            throw new ActiveLocalizationConflictException(conflicts);
+        }
+    }
 
     private async Task<ManagedInstallResult> ApplyVariantLockedAsync(
         ValidatedPackage package,
@@ -666,7 +893,19 @@ public sealed class ManagedFilesInstaller
                 throw new ManagedFilesInstallException(
                     "The selected variant targets a different Steam application.");
             }
+        }
 
+        var newPlans = CreatePackageFilePlans(package, root);
+        var allowedActivePaths = newPlans.Select(plan => plan.TargetPath)
+            .Concat(oldState is null
+                ? []
+                : CreateStateFilePlans(oldState).Select(plan => plan.TargetPath))
+            .ToArray();
+        EnsureNoActiveLocalizationConflicts(
+            installationKey, package.Manifest.Steam.AppId, root, allowedActivePaths);
+
+        if (oldState is not null)
+        {
             if (oldState.ProductId.Equals(product.Id, StringComparison.Ordinal) &&
                 oldState.Version.Equals(product.Release.Version, StringComparison.Ordinal))
             {
@@ -719,7 +958,6 @@ public sealed class ManagedFilesInstaller
             }
         }
 
-        var newPlans = CreatePackageFilePlans(package, root);
         var preservedDestinations = oldState is null
             ? await FindAdoptedDestinationsAsync(newPlans, cancellationToken)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -772,6 +1010,8 @@ public sealed class ManagedFilesInstaller
                 operationId,
                 cancellationToken);
             await ObserveAsync(ManagedInstallerPhase.StagingComplete);
+            EnsureNoActiveLocalizationConflicts(
+                installationKey, package.Manifest.Steam.AppId, root, allowedActivePaths);
 
             foreach (var oldPlan in oldPlans.Where(plan =>
                          !unchangedDestinations.Contains(plan.State.Destination)))
@@ -981,6 +1221,12 @@ public sealed class ManagedFilesInstaller
                 $"Installation slot '{installationKey}' is not installed through NFG Hub.");
         EnsureMutableSlotState(state, installationKey, expectedProductId);
         var plans = CreateStateFilePlans(state);
+        if (isEnabled)
+        {
+            EnsureNoActiveLocalizationConflicts(
+                installationKey, state.SteamAppId, state.GameRoot,
+                plans.Select(plan => plan.TargetPath));
+        }
 
         foreach (var plan in plans)
         {
@@ -1023,6 +1269,13 @@ public sealed class ManagedFilesInstaller
         try
         {
             await ObserveAsync(ManagedInstallerPhase.JournalDurable);
+            if (isEnabled)
+            {
+                EnsureNoActiveLocalizationConflicts(
+                    installationKey, state.SteamAppId, state.GameRoot,
+                    plans.Select(plan => plan.TargetPath));
+            }
+
             foreach (var plan in plans)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2917,13 +3170,15 @@ public sealed class ManagedFilesInstaller
     }
 
     private sealed record VariantObservation(
-        ManagedVariantPackage Variant,
-        IReadOnlyList<FilePlan> Plans,
+        InstalledProductState Candidate,
+        IReadOnlyList<StateFilePlan> Plans,
         bool IsActive,
         bool IsDisabled,
         bool UsesLegacyDisabledSuffix,
         bool HasRelatedArtifacts,
         DateTimeOffset LastWriteTimeUtc);
+
+    private sealed record KnownArtifact(string Path, long SizeBytes, string Sha256);
 
     private sealed record RollbackStagingEvidence(bool MayHaveActivatedFinal);
 

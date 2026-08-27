@@ -13,6 +13,25 @@ public sealed record PackageDownloadProgress(long BytesReceived, long TotalBytes
 
 public sealed class PackageDownloader(HttpClient httpClient)
 {
+    /// <summary>Finds an intact cached ZIP without creating directories or using the network.</summary>
+    public async Task<string?> TryGetCachedAsync(
+        ProductManifest product,
+        string downloadRoot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        ArgumentException.ThrowIfNullOrWhiteSpace(downloadRoot);
+        var payload = product.Release.Payload
+            ?? throw new PackageDownloadException(
+                $"Product '{product.Id}' does not have a downloadable payload.");
+        var productDirectory = ResolveInsideRoot(
+            Path.GetFullPath(downloadRoot),
+            SanitizeSegment(product.Id),
+            SanitizeSegment(product.Release.Version));
+        var path = Path.Combine(productDirectory, $"{payload.Sha256.ToLowerInvariant()}.zip");
+        return await MatchesPayloadAsync(path, payload, cancellationToken) ? path : null;
+    }
+
     public async Task<string> DownloadAsync(
         ProductManifest product,
         string downloadRoot,
