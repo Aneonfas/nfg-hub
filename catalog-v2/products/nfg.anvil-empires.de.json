@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "nfg.anvil-empires.de",
+  "type": "localization",
+  "familyId": "nfg.anvil-empires.localization",
+  "locale": "de",
+  "exclusiveGroup": "nfg.anvil-empires.ru",
+  "display": {
+    "title": "Anvil Empires",
+    "subtitle": "Deutsche Übersetzung",
+    "summary": "Deutsche Übersetzung der Spieloberfläche, Gegenstände und Systeme.",
+    "description": "Inoffizielle deutsche Übersetzung von Anvil Empires für Windows/Steam mit 3.233 Einträgen.",
+    "features": [
+      "Menüs, Einstellungen, Gegenstände, Bauwerke, Herstellung, Aufträge und Clientmeldungen",
+      "Direkt aus den englischen Spielressourcen übersetzt"
+    ]
+  },
+  "release": {
+    "version": "1.0.0-beta.1",
+    "channel": "beta",
+    "gameVersion": "steam-build-25584311",
+    "publishedAt": "2026-09-30T08:30:16Z",
+    "highlights": [
+      "Deutsche Übersetzung für Steam-Build 25584311",
+      "3.233 Lokalisierungseinträge"
+    ],
+    "knownIssues": [
+      "Servermeldungen, Text in Bildern und weitere Texte können englisch bleiben",
+      "Datums-, Zahlen- und bestimmte Pluralformate folgen weiterhin englischen Regeln"
+    ],
+    "notesUrl": "https://github.com/Aneonfas/anvil-empires-localizations/releases/tag/de-v1.0.0-beta.1",
+    "payload": {
+      "url": "https://github.com/Aneonfas/anvil-empires-localizations/releases/download/de-v1.0.0-beta.1/Anvil-Empires-German-v1.0.0-beta.1-steam-build-25584311.zip",
+      "sizeBytes": 330018,
+      "sha256": "4a20aed56d5194fc24dd039049752ff3e99a6fb4a881c6727a42886604d4c0c0"
+    }
+  },
+  "releases": [],
+  "compatibility": {
+    "platforms": [
+      "windows-x64"
+    ],
+    "gameVersion": "steam-build-25584311",
+    "status": "unknown"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": null,
+    "label": "3.233 Lokalisierungseinträge"
+  }
+}

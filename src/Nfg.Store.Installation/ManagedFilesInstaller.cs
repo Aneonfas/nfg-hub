@@ -726,7 +726,7 @@ public sealed class ManagedFilesInstaller
         string? steamAppId,
         string gameRoot)
     {
-        // These are the published manual RU/ES filenames, including older releases.
+        // These are the published manual RU/ES/DE/TR filenames, including older releases.
         // Restrict this compatibility rule to their slot and game; unrelated mods
         // and disabled backups must never be treated as active language conflicts.
         if (!installationKey.Equals("nfg.anvil-empires.ru", StringComparison.Ordinal) ||
@@ -761,8 +761,18 @@ public sealed class ManagedFilesInstaller
             return "nfg.anvil-empires.ru";
         }
 
-        return name.StartsWith("Anvil-Spanish", StringComparison.OrdinalIgnoreCase)
-            ? "nfg.anvil-empires.es"
+        if (name.StartsWith("Anvil-Spanish", StringComparison.OrdinalIgnoreCase))
+        {
+            return "nfg.anvil-empires.es";
+        }
+
+        if (name.StartsWith("Anvil-German", StringComparison.OrdinalIgnoreCase))
+        {
+            return "nfg.anvil-empires.de";
+        }
+
+        return name.StartsWith("Anvil-Turkish", StringComparison.OrdinalIgnoreCase)
+            ? "nfg.anvil-empires.tr"
             : null;
     }
 

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 2,
+  "id": "nfg.anvil-empires.tr",
+  "type": "localization",
+  "familyId": "nfg.anvil-empires.localization",
+  "locale": "tr",
+  "exclusiveGroup": "nfg.anvil-empires.ru",
+  "display": {
+    "title": "Anvil Empires",
+    "subtitle": "Türkçe yerelleştirme",
+    "summary": "Oyun arayüzü, eşyalar ve sistemler için Türkçe çeviri.",
+    "description": "Windows ve Steam için resmî olmayan Anvil Empires Türkçe çevirisi. 3.233 yerelleştirme girdisi ve Türkçe karakter desteği içerir.",
+    "features": [
+      "Arayüz, eşyalar, yapılar, üretim, görevler ve sistem mesajları",
+      "Türkçe karakterleri destekleyen yazı tipleri",
+      "Seçili oyun ekranları kullanıcı tarafından kontrol edildi"
+    ]
+  },
+  "release": {
+    "version": "1.0.0",
+    "channel": "stable",
+    "gameVersion": "steam-build-25584311",
+    "publishedAt": "2026-09-28T20:32:53Z",
+    "highlights": [
+      "Steam build 25584311 için ilk Türkçe sürüm",
+      "3.233 yerelleştirme girdisi",
+      "Kamera yakınlaştırma ayarındaki metin taşması düzeltildi",
+      "169 otomatik test geçti; seçili oyun ekranları kullanıcı tarafından onaylandı"
+    ],
+    "knownIssues": [
+      "Tüm ekranlar ve oyun akışları test edilmedi; ana dili Türkçe olan bir editörün incelemesi yapılmadı",
+      "Sunucu mesajları ve görsellerdeki yazılar İngilizce kalabilir",
+      "Sonraki test duyurusunun tarih biçimi İngilizce kalabilir",
+      "Yazı tipi değişiklikleri kalın ve italik görünümü etkileyebilir"
+    ],
+    "notesUrl": "https://github.com/Aneonfas/anvil-empires-localizations/releases/tag/tr-v1.0.0",
+    "payload": {
+      "url": "https://github.com/Aneonfas/anvil-empires-localizations/releases/download/tr-v1.0.0/Anvil-Empires-Turkish-v1.0.0-steam-build-25584311.zip",
+      "sizeBytes": 982884,
+      "sha256": "8d4a9ba2b4df899cbdbf16d3a351b2ad296acaa4bb6faa9698b2b5c48cd4bd83"
+    }
+  },
+  "releases": [],
+  "compatibility": {
+    "platforms": [
+      "windows-x64"
+    ],
+    "gameVersion": "steam-build-25584311",
+    "status": "compatible"
+  },
+  "installation": {
+    "strategy": "managed-files",
+    "supportsRollback": true,
+    "requiresElevation": "auto",
+    "detection": [
+      {
+        "provider": "steam",
+        "productId": "2383950"
+      }
+    ]
+  },
+  "dependencies": [],
+  "progress": {
+    "translationPercent": null,
+    "label": "Yayımlandı"
+  }
+}

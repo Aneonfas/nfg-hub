@@ -2,17 +2,21 @@
   "schemaVersion": 1,
   "source": {
     "repository": "https://github.com/Aneonfas/nfg-hub-catalog",
-    "commit": "dc33edf1e4b23f832cc9577f0f1b3906d602b3ec",
+    "commit": "7db81ffb9f0b16fad7bc426cfe494ea1985fffe6",
     "catalogPath": "v2/catalog.json"
   },
   "files": [
     {
       "path": "catalog.json",
-      "sha256": "44f0f92d58c84a12013d90cab5f6ba32d7606ff8feaa55b1dd0483b244511575"
+      "sha256": "0bcb2e36c7413495b41b7faceb48e49fca3423ffbe86fff6b31011cc9e829083"
+    },
+    {
+      "path": "products/nfg.anvil-empires.de.json",
+      "sha256": "4685f1d77e872e4db9bdf88bf044b74324a7b8ac0bfa2545e56fa6c4e97b1c75"
     },
     {
       "path": "products/nfg.anvil-empires.es.json",
-      "sha256": "de0a0c22d3691e4031f2e1df27d3551e8f45b991a5dc8cd07439d9f910eb5420"
+      "sha256": "23a01ccdb6335de1d69dfef45c3cba332beb427672738a0f5e6f7ffc1dfaaa74"
     },
     {
       "path": "products/nfg.anvil-empires.forge-helper.json",
@@ -20,7 +24,11 @@
     },
     {
       "path": "products/nfg.anvil-empires.ru.json",
-      "sha256": "2a1c7b811d409d74aa189ae22c2a6a9889868e131869c6d4a5dbc704974b23b1"
+      "sha256": "19a308c4741c5293f9221fef28306b75f74aebf45312b976d39b4ace4c1a6abc"
+    },
+    {
+      "path": "products/nfg.anvil-empires.tr.json",
+      "sha256": "501665b5111437d99259500148292a1696f6bae2bcb5de6bca345b9912315170"
     }
   ]
 }

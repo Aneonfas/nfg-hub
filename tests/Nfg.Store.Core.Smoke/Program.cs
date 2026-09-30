@@ -790,10 +790,10 @@ async Task CheckCatalogSourcesAsync()
     Assert(product.Locale == "ru", "Russian localization has an unexpected locale.");
     Assert(product.ExclusiveGroup == "nfg.anvil-empires.ru",
         "Russian localization has an unexpected installation slot.");
-    Assert(product.Release.Version == "1.0.1", "Unexpected current localization version.");
-    Assert(product.Release.GameVersion == "steam-build-24619810",
+    Assert(product.Release.Version == "1.1.0", "Unexpected current localization version.");
+    Assert(product.Release.GameVersion == "steam-build-25584311",
         "Current localization targets an unexpected game build.");
-    Assert(product.Releases.Count == 1 && product.Releases[0].Version == "1.0.0",
+    Assert(product.Releases.Any(release => release.Version == "1.0.0"),
         "Historical localization v1.0.0 was not loaded.");
     Assert(product.Display.Features.Count > 0, "Product features were not loaded.");
     Assert(product.Release.Highlights.Count > 0, "Release highlights were not loaded.");
@@ -815,10 +815,24 @@ async Task CheckCatalogSourcesAsync()
     Assert(spanish.Locale == "es", "Spanish localization has an unexpected locale.");
     Assert(spanish.ExclusiveGroup == product.ExclusiveGroup,
         "Russian and Spanish localizations should share one installation slot.");
-    Assert(spanish.Release.Version == "0.1.0", "Unexpected Spanish localization version.");
+    Assert(spanish.Release.Version == "1.1.0-beta.2", "Unexpected Spanish localization version.");
     Assert(
         File.Exists(Path.Combine(cacheRoot, "products", "nfg.anvil-empires.es.json")),
         "Spanish manifest was not cached.");
+
+    foreach (var (locale, version) in new[] { ("de", "1.0.0-beta.1"), ("tr", "1.0.0") })
+    {
+        var language = remoteResult.Catalog.Products.Single(candidate =>
+            candidate.Id == $"nfg.anvil-empires.{locale}");
+        Assert(language.SchemaVersion == 2 && language.Locale == locale &&
+               language.FamilyId == product.FamilyId &&
+               language.ExclusiveGroup == product.ExclusiveGroup &&
+               language.Release.Version == version &&
+               language.Release.GameVersion == "steam-build-25584311",
+            $"{locale} localization did not load into the shared language family.");
+        Assert(File.Exists(Path.Combine(cacheRoot, "products", $"{language.Id}.json")),
+            $"{locale} manifest was not cached.");
+    }
 
     var forgeHelper = remoteResult.Catalog.Products.Single(candidate =>
         candidate.Id == "nfg.anvil-empires.forge-helper");
@@ -881,6 +895,10 @@ async Task CheckCatalogSourcesAsync()
         emptyCacheRoot,
         bundledRoot);
     Assert(bundledResult.Source == CatalogSourceKind.Bundled, "Expected bundled catalog fallback.");
+    Assert(bundledResult.Catalog.Products.Where(candidate => candidate.FamilyId == product.FamilyId)
+            .Select(candidate => candidate.Locale).Order(StringComparer.Ordinal)
+            .SequenceEqual(new[] { "de", "es", "ru", "tr" }),
+        "The offline bundled catalog did not retain all four available language variants.");
 }
 
 async Task CheckRichCatalogValidationAsync()

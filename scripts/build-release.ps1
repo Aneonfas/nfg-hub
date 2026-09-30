@@ -249,6 +249,7 @@ try {
         $startupErrorPath = Join-Path $stagingRoot 'startup-smoke.stderr.txt'
         $startupProcess = Start-Process `
             -FilePath $extractedExecutablePath `
+            -WindowStyle Hidden `
             -ArgumentList '--startup-smoke' `
             -WorkingDirectory $extractedDirectory `
             -RedirectStandardError $startupErrorPath `
