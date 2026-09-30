@@ -76,6 +76,7 @@ internal static class ManagedVariantInstallerSmoke
         foreach (var (name, check) in new (string, Func<string, Task>)[]
                  {
                      ("manual-localization-conflict", CheckManualLocalizationConflictAsync),
+                     ("four-language-localization", CheckFourLanguageLocalizationAsync),
                      ("localization-mutation-guards", CheckLocalizationMutationGuardsAsync),
                      ("cached-localization-history", CheckCachedLocalizationHistoryAsync),
                      ("offline-localization-removal", CheckOfflineLocalizationRemovalAsync),
@@ -170,6 +171,115 @@ internal static class ManagedVariantInstallerSmoke
         Assert(File.ReadAllBytes($"{ruPath}.disabled").SequenceEqual(RuPayload),
             "Installing ES changed a disabled manual RU backup.");
         AssertManagedFile(gameRoot, ForgeDestination, ForgePayload, isEnabled: true);
+    }
+
+    private static async Task CheckFourLanguageLocalizationAsync(string root)
+    {
+        var languages = new[]
+        {
+            (Locale: "ru", Name: "Russian"),
+            (Locale: "es", Name: "Spanish"),
+            (Locale: "de", Name: "German"),
+            (Locale: "tr", Name: "Turkish")
+        };
+        var fixtures = new List<PackageFixture>();
+        foreach (var (locale, name) in languages)
+        {
+            fixtures.Add(await CreateLanguagePackageAsync(
+                Path.Combine(root, "packages"), $"nfg.anvil-empires.{locale}", locale,
+                new PackageFile($"{locale}.pak", $"Anvil/Content/Paks/Anvil-{name}-Full_P.pak",
+                    Encoding.UTF8.GetBytes($"managed {locale} package"))));
+        }
+
+        var products = fixtures.Select(fixture => fixture.Product).ToArray();
+        foreach (var manual in fixtures)
+        {
+            foreach (var target in fixtures.Where(fixture => fixture != manual))
+            {
+                var caseRoot = Path.Combine(root, $"{manual.Product.Locale}-to-{target.Product.Locale}");
+                var (libraryRoot, gameRoot) = CreateSteamGameRoot(caseRoot);
+                var dataRoot = Path.Combine(caseRoot, "data");
+                var stateStore = new InstallationStateStore(dataRoot);
+                using var offline = new OfflinePackageHandler();
+                using var httpClient = new HttpClient(offline);
+                var coordinator = new ProductInstallationCoordinator(httpClient, dataRoot, stateStore,
+                    new SteamGameLocator([libraryRoot], includeConfiguredSteam: false));
+                var manualPath = ResolveManagedPath(gameRoot, manual.Files[0].Destination);
+                WriteManagedFile(gameRoot, manual.Files[0].Destination, FreshPayload);
+                var before = SnapshotDirectory(gameRoot);
+                var inventory = await coordinator.ReconcileFamilyAsync(products);
+                Assert(inventory.HasConflict && inventory.State is null &&
+                       inventory.ConflictPaths?.Contains(manualPath) == true &&
+                       inventory.HasVariant(manual.Product.Id),
+                    $"Manual {manual.Product.Locale} was not discovered without saved state or ZIPs.");
+                CachePackage(dataRoot, target);
+                var error = await AssertThrowsAsync<ProductInstallationException>(
+                    () => coordinator.InstallAsync(target.Product),
+                    $"Hub activated {target.Product.Locale} beside manual {manual.Product.Locale}.");
+                Assert(error.Message.Contains(manualPath, StringComparison.Ordinal) &&
+                       SnapshotDirectory(gameRoot) == before &&
+                       await stateStore.LoadAsync(InstallationKey) is null,
+                    "A language conflict changed files, claimed state, or omitted its exact path.");
+                File.Move(manualPath, $"{manualPath}.disabled");
+                await coordinator.InstallAsync(target.Product);
+                AssertManagedFile(gameRoot, target.Files[0].Destination, target.Files[0].Contents, true);
+                await coordinator.RemoveFamilyVariantAsync(products, target.Product.Id,
+                    ManagedVariantRemovalScope.SelectedVariant);
+                AssertManagedPathAbsent(gameRoot, target.Files[0].Destination);
+                Assert(File.ReadAllBytes($"{manualPath}.disabled").SequenceEqual(FreshPayload),
+                    "Selected removal changed another language's unknown backup.");
+                Assert(offline.Requests.Count == 0, "Language conflict/removal used the network.");
+            }
+        }
+
+        foreach (var fixture in fixtures)
+        {
+            foreach (var enabled in new[] { true, false })
+            {
+                foreach (var scope in new[]
+                         {
+                             ManagedVariantRemovalScope.SelectedVariant,
+                             ManagedVariantRemovalScope.AllVariants
+                         })
+                {
+                    var caseRoot = Path.Combine(root, $"offline-{fixture.Product.Locale}-{enabled}-{scope}");
+                    var (libraryRoot, gameRoot) = CreateSteamGameRoot(caseRoot);
+                    var dataRoot = Path.Combine(caseRoot, "data");
+                    var stateStore = new InstallationStateStore(dataRoot);
+                    var installer = new ManagedFilesInstaller(stateStore);
+                    await installer.InstallAsync(fixture.Package, fixture.Product, gameRoot);
+                    await installer.SetEnabledAsync(InstallationKey, fixture.Product.Id, enabled);
+                    WriteManagedFile(gameRoot, ForgeDestination, ForgePayload);
+                    using var offline = new OfflinePackageHandler();
+                    using var httpClient = new HttpClient(offline);
+                    var coordinator = new ProductInstallationCoordinator(httpClient, dataRoot, stateStore,
+                        new SteamGameLocator([libraryRoot], includeConfiguredSteam: false));
+                    var inventory = await coordinator.RemoveFamilyVariantAsync(products, fixture.Product.Id, scope);
+                    Assert(inventory.State is null && !inventory.HasAnyInstalledVariants &&
+                           await stateStore.LoadAsync(InstallationKey) is null,
+                        $"Offline removal retained {fixture.Product.Locale} state.");
+                    AssertManagedPathAbsent(gameRoot, fixture.Files[0].Destination);
+                    AssertManagedFile(gameRoot, ForgeDestination, ForgePayload, true);
+                    Assert(offline.Requests.Count == 0, "Offline removal downloaded a language ZIP.");
+                }
+            }
+        }
+
+        var roundTripRoot = Path.Combine(root, "managed-switches");
+        var switchGameRoot = CreateGameRoot(roundTripRoot);
+        var switchStore = new InstallationStateStore(Path.Combine(roundTripRoot, "data"));
+        var switchInstaller = new ManagedFilesInstaller(switchStore);
+        var current = fixtures[0];
+        await switchInstaller.InstallAsync(current.Package, current.Product, switchGameRoot);
+        foreach (var target in fixtures.Skip(1).Concat(fixtures.Take(1)))
+        {
+            await switchInstaller.ApplyVariantAsync(target.Package, target.Product, switchGameRoot,
+                current.Product.Id);
+            AssertManagedPathAbsent(switchGameRoot, current.Files[0].Destination);
+            AssertManagedFile(switchGameRoot, target.Files[0].Destination, target.Files[0].Contents, true);
+            AssertState(await switchStore.LoadAsync(InstallationKey), target.Product.Id, true);
+            current = target;
+        }
     }
 
     private static async Task CheckLocalizationMutationGuardsAsync(string root)

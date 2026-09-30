@@ -1,18 +1,25 @@
 # NFG Hub
 
 NFG Hub is a lightweight Windows catalog, installer, and library for NFG products.
-Hub 0.3.0 reconciles Anvil Empires localization state with the actual managed
-files, simplifies language removal, and expands the Hub interface to ten
-languages.
+Hub 0.4.0 protects Anvil Empires language activation from conflicting manual
+RU/ES/DE/TR packages and supports removal of verified managed files offline.
 
 The current repository contains a working Windows Hub shell and versioned catalog/package contracts. The app loads the official catalog over HTTPS, keeps a validated local cache, downloads ZIP-only packages, detects Steam installations, and applies declared managed files without launching external installers.
 
-Hub 0.3.0 offers the interface in English, Russian,
+Hub 0.4.0 offers the interface in English, Russian,
 Spanish, German, French, Brazilian Portuguese, Simplified Chinese, Japanese,
 Korean, and Turkish. Localization families are reconciled with their actual
 managed files at startup. Their single Remove action can delete the language
 selected in the list or, when other languages are present, every language in
 the family.
+
+The bundled catalog includes Russian, Spanish, German, and Turkish game
+translations. Active manual packages with the published `Anvil-Russian*`,
+`Anvil-Spanish*`, `Anvil-German*`, and `Anvil-Turkish*` PAK names in the standard
+Paks directory block activation when they conflict. Hub preserves unknown or
+modified files and shows their exact paths. Removal uses hash-guarded saved
+state and optional verified cached packages without downloading other languages.
+Arbitrarily renamed or nested manual PAKs are outside this discovery scope.
 
 Official catalog: <https://github.com/Aneonfas/nfg-hub-catalog>
 

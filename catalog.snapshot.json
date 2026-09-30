@@ -2,7 +2,8 @@
   "schemaVersion": 1,
   "source": {
     "repository": "https://github.com/Aneonfas/nfg-hub-catalog",
-    "commit": "84d0fecf440abb4377bbd7dfc8ca98465082ff7c"
+    "commit": "7db81ffb9f0b16fad7bc426cfe494ea1985fffe6",
+    "catalogPath": "catalog.json"
   },
   "files": [
     {
@@ -15,7 +16,7 @@
     },
     {
       "path": "products/nfg.anvil-empires.ru.json",
-      "sha256": "01fed49c8ed100eeb4e31e5005b9bfcd7d8f2cf7d6a6c96135b8a76663b01201"
+      "sha256": "9f84100d20e1925a81b8b53c6ec5c4c7f0383172ee6ac4976eeeb5b2f66416ec"
     }
   ]
 }
