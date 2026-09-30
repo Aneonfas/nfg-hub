@@ -401,6 +401,7 @@ public sealed class ProductStateViewModel : PageViewModel
 
     public bool CanApply =>
         !IsBusy &&
+        !HasLocalizationConflict &&
         SelectedVersion?.IsPublished == true &&
         (!IsInstalled || HasSelectionChange);
 
@@ -426,7 +427,15 @@ public sealed class ProductStateViewModel : PageViewModel
     public bool HasOtherInstalledVariants =>
         _inventory.HasOtherInstalledVariant(_selectedVariant.ProductId);
 
-    public bool CanToggleProduct => !IsBusy && IsInstalled;
+    public bool HasLocalizationConflict => _inventory.HasConflict;
+
+    public string LocalizationConflictMessage => HasLocalizationConflict
+        ? Text.Format("State.LocalizationConflictDetails",
+            string.Join(Environment.NewLine, _inventory.ConflictPaths ?? []))
+        : string.Empty;
+
+    public bool CanToggleProduct =>
+        !IsBusy && IsInstalled && (!HasLocalizationConflict || IsProductEnabled);
 
     public string ActivationStatusText => IsProductEnabled
         ? Text.Get("State.Enabled")
@@ -436,7 +445,9 @@ public sealed class ProductStateViewModel : PageViewModel
         ? Text.Get("State.Disable")
         : Text.Get("State.Enable");
 
-    public string CatalogStatusText => IsUpdateInProgress
+    public string CatalogStatusText => HasLocalizationConflict
+        ? Text.Get("State.LocalizationConflict")
+        : IsUpdateInProgress
         ? IsVariantSwitchInProgress
             ? Text.Get("State.SwitchingLanguage")
             : Text.Get("State.SwitchingVersion")
@@ -470,6 +481,11 @@ public sealed class ProductStateViewModel : PageViewModel
             if (IsBusy)
             {
                 return Text.Get("State.Working");
+            }
+
+            if (HasLocalizationConflict)
+            {
+                return Text.Get("State.LocalizationConflict");
             }
 
             if (SelectedVersion?.IsPublished != true)
@@ -509,6 +525,11 @@ public sealed class ProductStateViewModel : PageViewModel
                 (IsBusy || _operationHasError))
             {
                 return OperationStatus;
+            }
+
+            if (HasLocalizationConflict)
+            {
+                return LocalizationConflictMessage;
             }
 
             if (IsInstalled && !string.IsNullOrWhiteSpace(OperationStatus))
@@ -722,7 +743,19 @@ public sealed class ProductStateViewModel : PageViewModel
                 _installationKey,
                 expectedState.ProductId,
                 enable);
-            SetManagedState(state);
+            try
+            {
+                ApplyInventory(
+                    await _installationCoordinator.ReconcileFamilyAsync(_manifests),
+                    preferManagedVariant: false);
+            }
+            catch
+            {
+                // Keep the confirmed toggle result and the previous conflict
+                // evidence if the rest of the family cannot be read safely.
+                SetManagedState(state);
+            }
+
             OperationStatus = state.IsEnabled
                 ? Text.Get("State.EnabledSuccess")
                 : Text.Get("State.DisabledSuccess");
@@ -1124,6 +1157,9 @@ public sealed class ProductStateViewModel : PageViewModel
 
     private void RefreshActionState()
     {
+        OnPropertyChanged(nameof(HasLocalizationConflict));
+        OnPropertyChanged(nameof(LocalizationConflictMessage));
+        OnPropertyChanged(nameof(CatalogStatusText));
         OnPropertyChanged(nameof(CanApply));
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanUpdate));

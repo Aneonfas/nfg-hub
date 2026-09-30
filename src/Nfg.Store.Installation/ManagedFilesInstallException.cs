@@ -1,6 +1,6 @@
 namespace Nfg.Store.Installation;
 
-public sealed class ManagedFilesInstallException : Exception
+public class ManagedFilesInstallException : Exception
 {
     public ManagedFilesInstallException(string message)
         : base(message)

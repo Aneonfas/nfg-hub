@@ -24,7 +24,8 @@ public sealed record ManagedFamilyInventory(
     string InstallationKey,
     InstalledProductState? State,
     IReadOnlyList<ManagedVariantPresence> Variants,
-    bool HasConflict = false)
+    bool HasConflict = false,
+    IReadOnlyList<string>? ConflictPaths = null)
 {
     public bool HasAnyInstalledVariants => Variants.Any(variant => variant.IsInstalled);
 

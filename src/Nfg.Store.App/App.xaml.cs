@@ -111,14 +111,19 @@ public partial class App : Application
                         state.InstallationKey,
                         installationKey,
                         StringComparison.Ordinal));
-                if (installedState is null &&
-                    !products.Any(product => libraryProductIds.Contains(product.Id)))
-                {
-                    continue;
-                }
-
                 try
                 {
+                    // A first-time Hub user can already have a manual language PAK.
+                    // Inventory now uses only local state/cache, so probe detected
+                    // games even before the family is added to the Hub library.
+                    if (installedState is null &&
+                        !products.Any(product => libraryProductIds.Contains(product.Id)) &&
+                        !products.Any(product =>
+                            installationCoordinator.DetectGameInstallation(product) is not null))
+                    {
+                        continue;
+                    }
+
                     installationInventories[installationKey] =
                         await installationCoordinator.ReconcileFamilyAsync(products);
                 }

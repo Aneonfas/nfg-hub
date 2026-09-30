@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text;
+using Nfg.Store.App.Localization;
 using Nfg.Store.App.Services;
 using Nfg.Store.App.ViewModels;
 using Nfg.Store.Contracts;
@@ -142,6 +144,147 @@ internal static class ProductFamilyViewModelSmoke
             Path.Combine(dataRoot, "forge"),
             operations,
             forge);
+        CheckLocalizationConflictPresentation(
+            Path.Combine(dataRoot, "localization-conflict"), gameRoot, russian, spanish);
+        await CheckToggleConflictReconciliationAsync(Path.Combine(dataRoot, "toggle-conflict"));
+    }
+
+    private static async Task CheckToggleConflictReconciliationAsync(string root)
+    {
+        const string ruDestination = "Anvil/Content/Paks/Anvil-Russian-Full_P.pak";
+        const string esDestination = "Anvil/Content/Paks/Anvil-Spanish-Full_P.pak";
+        var ruBytes = Encoding.UTF8.GetBytes("toggle conflict RU fixture");
+        var esBytes = Encoding.UTF8.GetBytes("toggle conflict ES fixture");
+        var ru = await ManagedVariantInstallerSmoke.CreatePackageAsync(root, RuProductId, "ru",
+            [new ManagedVariantInstallerSmoke.PackageFile("ru.pak", ruDestination, ruBytes)]);
+        var es = await ManagedVariantInstallerSmoke.CreatePackageAsync(root, EsProductId, "es",
+            [new ManagedVariantInstallerSmoke.PackageFile("es.pak", esDestination, esBytes)]);
+
+        foreach (var knownEs in new[] { true, false })
+        {
+            var caseRoot = Path.Combine(root, knownEs ? "known-es" : "unknown-es");
+            var (libraryRoot, gameRoot) = ManagedVariantInstallerSmoke.CreateSteamGameRoot(caseRoot);
+            var dataRoot = Path.Combine(caseRoot, "data");
+            var stateStore = new InstallationStateStore(dataRoot);
+            var installed = await new ManagedFilesInstaller(stateStore).InstallAsync(
+                ru.Package, ru.Product, gameRoot);
+            var ruPath = Path.Combine(gameRoot, ruDestination.Replace('/', Path.DirectorySeparatorChar));
+            var esPath = Path.Combine(gameRoot, esDestination.Replace('/', Path.DirectorySeparatorChar));
+            await File.WriteAllBytesAsync(esPath, esBytes);
+            if (knownEs)
+            {
+                ManagedVariantInstallerSmoke.CachePackage(dataRoot, es);
+            }
+
+            using var offline = new OfflineHandler();
+            using var httpClient = new HttpClient(offline);
+            var coordinator = new ProductInstallationCoordinator(httpClient, dataRoot, stateStore,
+                new SteamGameLocator([libraryRoot], includeConfiguredSteam: false));
+            var inventory = await coordinator.ReconcileFamilyAsync([ru.Product, es.Product]);
+            Assert(inventory.HasConflict, "The toggle fixture did not start with two active language PAKs.");
+            var libraryStore = new ProductLibraryStore(dataRoot);
+            await libraryStore.AddAsync(RuProductId);
+            var family = new ProductStateViewModel(
+                [ru.Product, es.Product], coordinator, libraryStore, installed.State,
+                isInLibrary: true, detectedGameBuildId: ru.Package.Manifest.Steam.BuildId, inventory);
+
+            family.ToggleProductCommand.Execute(null);
+            await WaitUntilAsync(() => !family.IsBusy, "Conflict-resolving disable did not finish.");
+
+            Assert(family.HasLocalizationConflict == !knownEs,
+                "Disabling owned RU left a stale conflict or concealed an unknown active ES PAK.");
+            Assert(family.OperationStatus == LocalizationService.Instance.Get("State.DisabledSuccess"),
+                "The toggle status described the reconciled sibling instead of the RU that was disabled.");
+            Assert(!File.Exists(ruPath) &&
+                   File.ReadAllBytes($"{ruPath}.nfg-disabled").SequenceEqual(ruBytes) &&
+                   File.ReadAllBytes(esPath).SequenceEqual(esBytes),
+                "Disabling RU changed or removed either language payload.");
+            if (knownEs)
+            {
+                Assert(family.InstalledProductId == EsProductId && family.IsProductEnabled &&
+                       family.LocalizationConflictMessage.Length == 0,
+                    "The remaining recognized ES was not reflected in the family UI.");
+                family.SelectedVariant = family.AvailableVariants.Single(variant =>
+                    variant.ProductId == RuProductId);
+                Assert(family.CanApply && family.ApplyVariantCommand.CanExecute(null),
+                    "The resolved conflict left family actions blocked until a restart.");
+            }
+            else
+            {
+                Assert(!family.IsProductEnabled && !family.CanToggleProduct && !family.CanApply &&
+                       family.LocalizationConflictMessage.Contains(esPath, StringComparison.Ordinal),
+                    "An unknown active sibling lost its conflict warning after disabling RU.");
+            }
+
+            Assert(offline.RequestCount == 0, "Refreshing the family after a toggle attempted HTTP.");
+        }
+
+        var fallbackRoot = Path.Combine(root, "read-failure");
+        var fallbackState = CreateState(RuProductId, "1.0.0", fallbackRoot, isEnabled: true);
+        var conflictPath = Path.Combine(fallbackRoot, "Anvil-Spanish-Full_P.pak");
+        var operations = new BlockingInstallationOperations(fallbackState, fallbackRoot)
+        {
+            ReconciliationFailure = new IOException("Injected inventory read failure after toggle.")
+        };
+        var fallbackFamily = new ProductStateViewModel(
+            [ru.Product, es.Product], operations, new ProductLibraryStore(fallbackRoot),
+            fallbackState, isInLibrary: true,
+            inventory: ManagedFamilyInventory.FromState(InstallationKey, fallbackState) with
+            {
+                HasConflict = true,
+                ConflictPaths = [conflictPath]
+            });
+        fallbackFamily.ToggleProductCommand.Execute(null);
+        await WaitUntilAsync(() => !fallbackFamily.IsBusy, "Toggle fallback did not finish.");
+        Assert(operations.ReconciliationCalls == 1 &&
+               fallbackFamily.InstalledProductId == RuProductId && !fallbackFamily.IsProductEnabled &&
+               fallbackFamily.HasLocalizationConflict && !fallbackFamily.CanToggleProduct &&
+               fallbackFamily.LocalizationConflictMessage.Contains(conflictPath, StringComparison.Ordinal),
+            "A failed inventory read lost the confirmed toggle result or cleared uncertain conflict evidence.");
+    }
+
+    private static void CheckLocalizationConflictPresentation(
+        string dataRoot,
+        string gameRoot,
+        ProductManifest russian,
+        ProductManifest spanish)
+    {
+        var conflictPath = Path.Combine(gameRoot, "Anvil", "Content", "Paks", "Anvil-Russian-Full_P.pak");
+        foreach (var enabled in new bool?[] { null, false, true })
+        {
+            var state = enabled is null
+                ? null
+                : CreateState(RuProductId, "1.0.0", gameRoot, enabled.Value);
+            var inventory = new ManagedFamilyInventory(
+                InstallationKey, state,
+                [new ManagedVariantPresence(RuProductId, "1.0.0", state is not null,
+                    enabled == true, HasRelatedArtifacts: true)],
+                HasConflict: true,
+                ConflictPaths: [conflictPath]);
+            var operations = new BlockingInstallationOperations(state, gameRoot);
+            var family = new ProductStateViewModel(
+                [russian, spanish], operations, new ProductLibraryStore(dataRoot),
+                state, isInLibrary: state is not null, detectedGameBuildId: "100", inventory);
+            family.SelectedVariant = family.AvailableVariants.Single(variant =>
+                variant.ProductId == EsProductId);
+
+            Assert(!family.CanApply && !family.ApplyVariantCommand.CanExecute(null),
+                "The language switch was offered while an active manual PAK conflicted with it.");
+            Assert(family.AvailabilityMessage.Contains(conflictPath, StringComparison.Ordinal) &&
+                   family.AvailabilityMessage.Contains(".disabled", StringComparison.Ordinal),
+                "The localization conflict omitted the exact file or safe disabling instructions.");
+            Assert(family.CatalogStatusText.Contains("Конфликт", StringComparison.Ordinal) &&
+                   family.PrimaryActionText.Contains("Конфликт", StringComparison.Ordinal),
+                "The catalog or primary action presented the conflict as an ordinary language switch.");
+            Assert(family.CanToggleProduct == (enabled == true),
+                "Conflicting PAKs must block enabling but still allow disabling an owned active PAK.");
+            if (state is null)
+            {
+                Assert(!family.IsInstalled && !family.IsInLibrary &&
+                       family.InstalledProductId.Length == 0 && family.InstalledSelectionText == "—",
+                    "An unowned manual conflict appeared as an installed library product.");
+            }
+        }
     }
 
     private static async Task CheckApplyFailureReloadsCommittedStateAsync(
@@ -445,6 +588,10 @@ internal static class ProductFamilyViewModelSmoke
             : [initialState.ProductId];
         private InstalledProductState? _state = initialState;
 
+        public Exception? ReconciliationFailure { get; init; }
+
+        public int ReconciliationCalls { get; private set; }
+
         public TaskCompletionSource<ApplyCall> ApplyEntered { get; } = NewSignal<ApplyCall>();
 
         public TaskCompletionSource<GuardedCall> ToggleEntered { get; } = NewSignal<GuardedCall>();
@@ -486,8 +633,13 @@ internal static class ProductFamilyViewModelSmoke
 
         public Task<ManagedFamilyInventory> ReconcileFamilyAsync(
             IReadOnlyList<ProductManifest> products,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(CreateInventory(products));
+            CancellationToken cancellationToken = default)
+        {
+            ReconciliationCalls++;
+            return ReconciliationFailure is not null
+                ? Task.FromException<ManagedFamilyInventory>(ReconciliationFailure)
+                : Task.FromResult(CreateInventory(products));
+        }
 
         public Task<ManagedFamilyInventory> RemoveFamilyVariantAsync(
             IReadOnlyList<ProductManifest> products,
@@ -581,10 +733,15 @@ internal static class ProductFamilyViewModelSmoke
 
     private sealed class OfflineHandler : HttpMessageHandler
     {
+        public int RequestCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }
     }
 
     private sealed record ApplyCall(

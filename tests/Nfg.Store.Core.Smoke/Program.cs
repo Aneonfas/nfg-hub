@@ -64,6 +64,29 @@ if (args.Length > 0)
         return;
     }
 
+    if (args is ["--localization-lifecycle"])
+    {
+        var focusedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "nfg-store-localization-smoke",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(focusedRoot);
+            await ManagedVariantInstallerSmoke.RunLocalizationLifecycleAsync(focusedRoot);
+            Console.WriteLine("NFG Hub localization lifecycle smoke checks passed.");
+        }
+        finally
+        {
+            if (Directory.Exists(focusedRoot))
+            {
+                Directory.Delete(focusedRoot, recursive: true);
+            }
+        }
+
+        return;
+    }
+
     if (args is ["--product-family-view-model"])
     {
         var focusedRoot = Path.Combine(
@@ -90,7 +113,7 @@ if (args.Length > 0)
     throw new ArgumentException(
         "Usage: Nfg.Store.Core.Smoke " +
         "[--validate-catalog <catalog-root> | --product-family-view-model | " +
-        "--managed-state-mutation]");
+        "--managed-state-mutation | --localization-lifecycle]");
 }
 
 var catalogUri = new Uri("https://catalog.test/v2/catalog.json");
